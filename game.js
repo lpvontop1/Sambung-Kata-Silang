@@ -1,6 +1,6 @@
 /* ============================================================
    SAMBUNG KATA SILANG — Game Logic
-   Tahap 02: Desain Grid/Board — Model Data
+   Tahap 03: Rendering Grid — DOM-based Grid
    ============================================================ */
 
 'use strict';
@@ -631,6 +631,7 @@ const TurnModule = (() => {
 // ============================================================
 // --- UI MODULE ---
 // Manages DOM rendering, screen navigation, and user interaction.
+// Tahap 03: renderBoard with diffing, CSS Grid, debug mode
 // ============================================================
 const UIModule = (() => {
   // Screen management
@@ -642,6 +643,58 @@ const UIModule = (() => {
     settings: document.getElementById('screen-settings'),
     about:    document.getElementById('screen-about')
   };
+
+  // --------------------------------------------------------
+  // Board Rendering State (for diffing)
+  // --------------------------------------------------------
+  /** @type {Map<string, HTMLDivElement>} Map of "row,col" → cell DOM element */
+  let renderedCells = new Map();
+
+  /** @type {{ minRow: number, maxRow: number, minCol: number, maxCol: number }|null} */
+  let lastBounds = null;
+
+  /** @type {Set<string>} Set of cell keys that were newly placed (for highlight animation) */
+  let newCellKeys = new Set();
+
+  /** @type {Set<string>} Set of cell keys that are anchor cells */
+  let anchorCellKeys = new Set();
+
+  /** @type {string|null} Currently selected anchor cell key */
+  let selectedAnchorKey = null;
+
+  // Word color palette — assigns different subtle colors per wordId for visual clarity
+  const WORD_COLORS = [
+    '#e94560', '#4a8fe7', '#45e97b', '#e9a845', '#a845e9',
+    '#45e9e9', '#e945a8', '#8fe945', '#4545e9', '#e9e945'
+  ];
+  const wordColorMap = new Map();
+  let wordColorIndex = 0;
+
+  /**
+   * Get a color for a wordId. Each word gets a consistent color.
+   * @param {string} wordId
+   * @returns {string} CSS color string
+   */
+  function getWordColor(wordId) {
+    if (!wordId) return WORD_COLORS[0];
+    if (!wordColorMap.has(wordId)) {
+      wordColorMap.set(wordId, WORD_COLORS[wordColorIndex % WORD_COLORS.length]);
+      wordColorIndex++;
+    }
+    return wordColorMap.get(wordId);
+  }
+
+  /**
+   * Clear word color assignments (call on board reset).
+   */
+  function clearWordColors() {
+    wordColorMap.clear();
+    wordColorIndex = 0;
+  }
+
+  // --------------------------------------------------------
+  // Screen Management
+  // --------------------------------------------------------
 
   /**
    * Show a specific screen, hide all others.
@@ -655,6 +708,10 @@ const UIModule = (() => {
     });
   }
 
+  // --------------------------------------------------------
+  // Toast Notifications
+  // --------------------------------------------------------
+
   /**
    * Show a toast notification.
    * @param {string} message - Toast text
@@ -663,6 +720,7 @@ const UIModule = (() => {
    */
   function showToast(message, type = 'info', duration = 2500) {
     const container = document.getElementById('toast-container');
+    if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast toast--${type}`;
     toast.textContent = message;
@@ -674,11 +732,388 @@ const UIModule = (() => {
     }, duration);
   }
 
+  // --------------------------------------------------------
+  // Board Rendering
+  // --------------------------------------------------------
+
+  /**
+   * Render the board to the DOM using efficient diffing.
+   * Only updates cells that have changed since the last render.
+   *
+   * Algorithm:
+   * 1. Get current bounds from BoardModule
+   * 2. If bounds changed, reconfigure CSS Grid
+   * 3. Diff: for each cell in BoardModule.cells
+   *    - If cell exists in renderedCells and unchanged → skip
+   *    - If cell exists but changed → update DOM
+   *    - If cell doesn't exist in DOM → create and insert
+   * 4. Remove any rendered cells that no longer exist in board
+   * 5. Fill empty cells within bounds (for grid structure)
+   */
+  function renderBoard() {
+    const gridEl = document.getElementById('board-grid');
+    if (!gridEl) return;
+
+    const bounds = BoardModule.getBounds();
+    const boardCells = BoardModule.getAllCells();
+    const boardCellMap = new Map();
+    for (const c of boardCells) {
+      boardCellMap.set(c.key, c);
+    }
+
+    // --- Step 1: Check if bounds changed → reconfigure grid ---
+    const boundsChanged = !lastBounds ||
+      lastBounds.minRow !== bounds.minRow ||
+      lastBounds.maxRow !== bounds.maxRow ||
+      lastBounds.minCol !== bounds.minCol ||
+      lastBounds.maxCol !== bounds.maxCol;
+
+    if (boundsChanged && boardCells.length > 0) {
+      const rows = bounds.maxRow - bounds.minRow + 1;
+      const cols = bounds.maxCol - bounds.minCol + 1;
+      gridEl.style.gridTemplateColumns = `repeat(${cols}, var(--cell-size))`;
+      gridEl.style.gridTemplateRows = `repeat(${rows}, var(--cell-size))`;
+      lastBounds = { ...bounds };
+    }
+
+    // Remove placeholder text if board has cells
+    if (boardCells.length > 0) {
+      const placeholder = gridEl.querySelector('.board-placeholder');
+      if (placeholder) placeholder.remove();
+    }
+
+    // --- Step 2: Diff and update cells ---
+    const currentKeys = new Set();
+
+    // Process filled cells from board
+    for (const { key, row, col, cellData } of boardCells) {
+      currentKeys.add(key);
+      const existingEl = renderedCells.get(key);
+
+      if (existingEl) {
+        // Cell exists in DOM — check if update needed
+        const needsUpdate = existingEl.dataset.letter !== (cellData.letter || '') ||
+          existingEl.dataset.wordId !== (cellData.wordId || '') ||
+          existingEl.dataset.direction !== (cellData.direction || '');
+
+        if (needsUpdate) {
+          updateCellElement(existingEl, row, col, cellData);
+        }
+
+        // Always update CSS class states (new, anchor, intersection)
+        updateCellClasses(existingEl, key, cellData);
+      } else {
+        // New cell — create DOM element
+        const cellEl = createCellElement(row, col, cellData);
+        positionCellInGrid(cellEl, row, col, bounds);
+        gridEl.appendChild(cellEl);
+        renderedCells.set(key, cellEl);
+        updateCellClasses(cellEl, key, cellData);
+      }
+    }
+
+    // --- Step 3: Remove cells that no longer exist in board ---
+    for (const [key, el] of renderedCells) {
+      if (!currentKeys.has(key)) {
+        el.remove();
+        renderedCells.delete(key);
+      }
+    }
+
+    // --- Step 4: Ensure empty cells within bounds for grid structure ---
+    if (boundsChanged && boardCells.length > 0) {
+      ensureEmptyCells(gridEl, bounds, boardCellMap);
+    }
+  }
+
+  /**
+   * Create a DOM element for a board cell.
+   * @param {number} row
+   * @param {number} col
+   * @param {CellData} cellData
+   * @returns {HTMLDivElement}
+   */
+  function createCellElement(row, col, cellData) {
+    const cell = document.createElement('div');
+    cell.className = 'cell cell-filled';
+    cell.dataset.row = row;
+    cell.dataset.col = col;
+    cell.dataset.letter = cellData.letter || '';
+    cell.dataset.wordId = cellData.wordId || '';
+    cell.dataset.direction = cellData.direction || '';
+
+    // Letter span
+    const span = document.createElement('span');
+    span.className = 'cell__letter';
+    span.textContent = cellData.letter || '';
+    cell.appendChild(span);
+
+    // Intersection indicator
+    if (cellData.partOfWords && cellData.partOfWords.length >= 2) {
+      cell.dataset.intersection = 'true';
+    }
+
+    // Debug coordinate label
+    if (BoardModule.isDebugMode()) {
+      const coord = document.createElement('span');
+      coord.className = 'cell__coord';
+      coord.textContent = `${row},${col}`;
+      cell.appendChild(coord);
+    }
+
+    // Color by wordId (optional visual clarity)
+    const color = getWordColor(cellData.wordId);
+    cell.style.setProperty('--word-color', color);
+
+    // Click handler for anchor selection
+    cell.addEventListener('click', () => onCellClick(row, col, cellData));
+
+    return cell;
+  }
+
+  /**
+   * Update an existing cell DOM element with new data.
+   * @param {HTMLDivElement} el
+   * @param {number} row
+   * @param {number} col
+   * @param {CellData} cellData
+   */
+  function updateCellElement(el, row, col, cellData) {
+    el.dataset.letter = cellData.letter || '';
+    el.dataset.wordId = cellData.wordId || '';
+    el.dataset.direction = cellData.direction || '';
+
+    // Update letter
+    const letterSpan = el.querySelector('.cell__letter');
+    if (letterSpan) {
+      letterSpan.textContent = cellData.letter || '';
+    }
+
+    // Update intersection
+    if (cellData.partOfWords && cellData.partOfWords.length >= 2) {
+      el.dataset.intersection = 'true';
+    } else {
+      delete el.dataset.intersection;
+    }
+
+    // Update color
+    const color = getWordColor(cellData.wordId);
+    el.style.setProperty('--word-color', color);
+
+    // Update debug coord
+    if (BoardModule.isDebugMode() && !el.querySelector('.cell__coord')) {
+      const coord = document.createElement('span');
+      coord.className = 'cell__coord';
+      coord.textContent = `${row},${col}`;
+      el.appendChild(coord);
+    }
+  }
+
+  /**
+   * Update CSS classes on a cell based on its state (new, anchor, intersection).
+   * @param {HTMLDivElement} el
+   * @param {string} key - Cell key "row,col"
+   * @param {CellData} cellData
+   */
+  function updateCellClasses(el, key, cellData) {
+    // Base class
+    if (cellData.letter) {
+      el.classList.remove('cell-empty');
+      el.classList.add('cell-filled');
+    } else {
+      el.classList.remove('cell-filled');
+      el.classList.add('cell-empty');
+    }
+
+    // New cell highlight
+    if (newCellKeys.has(key)) {
+      el.classList.add('cell-new');
+    } else {
+      el.classList.remove('cell-new');
+    }
+
+    // Anchor cell highlight
+    if (anchorCellKeys.has(key)) {
+      el.classList.add('cell-anchor');
+    } else {
+      el.classList.remove('cell-anchor');
+    }
+
+    // Intersection
+    if (cellData.partOfWords && cellData.partOfWords.length >= 2) {
+      el.classList.add('cell-intersection');
+    } else {
+      el.classList.remove('cell-intersection');
+    }
+
+    // Selected anchor
+    if (key === selectedAnchorKey) {
+      el.classList.add('cell-anchor--selected');
+    } else {
+      el.classList.remove('cell-anchor--selected');
+    }
+  }
+
+  /**
+   * Position a cell element in the CSS Grid using grid-row and grid-column.
+   * @param {HTMLDivElement} el
+   * @param {number} row
+   * @param {number} col
+   * @param {object} bounds
+   */
+  function positionCellInGrid(el, row, col, bounds) {
+    const gridRow = row - bounds.minRow + 1;
+    const gridCol = col - bounds.minCol + 1;
+    el.style.gridRow = gridRow;
+    el.style.gridColumn = gridCol;
+  }
+
+  /**
+   * Ensure empty cells exist within the grid bounds for visual structure.
+   * This fills in the gaps between filled cells so the CSS Grid renders properly.
+   * @param {HTMLElement} gridEl
+   * @param {object} bounds
+   * @param {Map<string, object>} boardCellMap
+   */
+  function ensureEmptyCells(gridEl, bounds, boardCellMap) {
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        const key = BoardModule.cellKey(r, c);
+        if (!boardCellMap.has(key) && !renderedCells.has(key)) {
+          // Create empty cell for grid structure
+          const emptyEl = document.createElement('div');
+          emptyEl.className = 'cell cell-empty';
+          emptyEl.dataset.row = r;
+          emptyEl.dataset.col = c;
+          emptyEl.dataset.letter = '';
+          positionCellInGrid(emptyEl, r, c, bounds);
+
+          if (BoardModule.isDebugMode()) {
+            const coord = document.createElement('span');
+            coord.className = 'cell__coord';
+            coord.textContent = `${r},${c}`;
+            emptyEl.appendChild(coord);
+          }
+
+          gridEl.appendChild(emptyEl);
+          renderedCells.set(key, emptyEl);
+        }
+      }
+    }
+  }
+
+  // --------------------------------------------------------
+  // Cell Interaction
+  // --------------------------------------------------------
+
+  /**
+   * Handle click on a board cell — select as anchor for word placement.
+   * @param {number} row
+   * @param {number} col
+   * @param {CellData} cellData
+   */
+  function onCellClick(row, col, cellData) {
+    if (!cellData.letter) return; // Can't select empty cell as anchor
+
+    const key = BoardModule.cellKey(row, col);
+
+    // Toggle selection
+    if (selectedAnchorKey === key) {
+      selectedAnchorKey = null;
+    } else {
+      selectedAnchorKey = key;
+    }
+
+    // Update anchor info in input area
+    const anchorLetter = document.getElementById('anchor-letter');
+    const anchorPos = document.getElementById('anchor-position');
+    if (selectedAnchorKey) {
+      if (anchorLetter) anchorLetter.textContent = cellData.letter;
+      if (anchorPos) anchorPos.textContent = `(${row},${col})`;
+    } else {
+      if (anchorLetter) anchorLetter.textContent = '-';
+      if (anchorPos) anchorPos.textContent = '(-,-)';
+    }
+
+    // Re-render to update CSS classes
+    renderBoard();
+  }
+
+  // --------------------------------------------------------
+  // Public helpers for other modules
+  // --------------------------------------------------------
+
+  /**
+   * Mark cells as newly placed (for highlight animation).
+   * @param {Array<{row: number, col: number}>} cells
+   */
+  function markNewCells(cells) {
+    newCellKeys.clear();
+    for (const { row, col } of cells) {
+      newCellKeys.add(BoardModule.cellKey(row, col));
+    }
+    // Auto-clear after animation duration
+    setTimeout(() => {
+      newCellKeys.clear();
+      renderBoard();
+    }, 600);
+  }
+
+  /**
+   * Update anchor cell highlights based on current board state.
+   */
+  function updateAnchorHighlights() {
+    anchorCellKeys.clear();
+    const anchors = BoardModule.getAnchorCells();
+    for (const { row, col } of anchors) {
+      anchorCellKeys.add(BoardModule.cellKey(row, col));
+    }
+  }
+
+  /**
+   * Clear all rendered state (call on board reset).
+   */
+  function clearRenderedState() {
+    renderedCells.clear();
+    lastBounds = null;
+    newCellKeys.clear();
+    anchorCellKeys.clear();
+    selectedAnchorKey = null;
+    clearWordColors();
+  }
+
+  /**
+   * Toggle debug coordinate display on all cells.
+   */
+  function toggleDebugRender() {
+    const isDebug = BoardModule.isDebugMode();
+    for (const [key, el] of renderedCells) {
+      const existingCoord = el.querySelector('.cell__coord');
+      if (isDebug && !existingCoord) {
+        const row = el.dataset.row;
+        const col = el.dataset.col;
+        const coord = document.createElement('span');
+        coord.className = 'cell__coord';
+        coord.textContent = `${row},${col}`;
+        el.appendChild(coord);
+      } else if (!isDebug && existingCoord) {
+        existingCoord.remove();
+      }
+    }
+  }
+
+  // --------------------------------------------------------
   // Public API
+  // --------------------------------------------------------
   return {
     showScreen,
     showToast,
-    renderBoard:     (board) => { /* Tahap 03 */ },
+    renderBoard,
+    markNewCells,
+    updateAnchorHighlights,
+    clearRenderedState,
+    toggleDebugRender,
+    getSelectedAnchor: () => selectedAnchorKey,
     scrollToWord:    (word) => { /* Tahap 04 */ },
     updateHUD:       (data) => { /* Tahap 39 */ },
     showAutocomplete:(suggestions) => { /* Tahap 38 */ },
@@ -761,8 +1196,9 @@ const GameController = (() => {
     // Start at main menu
     UIModule.showScreen('menu');
 
-    console.log('[Sambung Kata Silang] Initialized — Tahap 02');
+    console.log('[Sambung Kata Silang] Initialized — Tahap 03');
     console.log('[BoardModule] Available:', Object.keys(BoardModule).join(', '));
+    console.log('[UIModule] Available:', Object.keys(UIModule).join(', '));
   }
 
   // --- MENU EVENTS ---
@@ -879,6 +1315,10 @@ const GameController = (() => {
     UIModule.showScreen('game');
     TurnModule.setGameMode(selectedMode);
 
+    // Reset board and rendered state
+    BoardModule.reset();
+    UIModule.clearRenderedState();
+
     // Update HUD with selected mode
     const hudMode = document.getElementById('hud-mode');
     if (hudMode) {
@@ -891,6 +1331,9 @@ const GameController = (() => {
       };
       hudMode.textContent = modeNames[selectedMode] || 'Classic';
     }
+
+    // Render empty board
+    UIModule.renderBoard();
 
     UIModule.showToast(`Game dimulai! Mode: ${selectedMode}`, 'success');
     console.log(`[Game] Starting game — Mode: ${selectedMode}, Players: ${selectedPlayerCount}`);

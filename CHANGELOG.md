@@ -55,3 +55,37 @@
   - Serialize/deserialize roundtrip
   - UUID uniqueness
   - Debug mode toggle
+
+## [0.3.0] — Tahap 03: Rendering Grid — DOM-based Grid
+
+### Added
+- `game.js` — UIModule renderBoard fully implemented with:
+  - **Diffing algorithm**: Only updates cells that changed since last render (compares dataset attributes)
+  - **CSS Grid layout**: `grid-template-columns` and `grid-template-rows` computed from `BoardModule.getBounds()`
+  - **Cell creation**: `createCellElement()` with letter span, data attributes, word color, click handler
+  - **Cell update**: `updateCellElement()` efficiently patches existing DOM without full replacement
+  - **Cell classes**: Dynamic CSS class management — `cell-filled`, `cell-empty`, `cell-new`, `cell-anchor`, `cell-intersection`, `cell-anchor--selected`
+  - **Empty cells**: `ensureEmptyCells()` fills grid gaps for proper CSS Grid structure
+  - **Grid positioning**: `positionCellInGrid()` sets `gridRow`/`gridColumn` based on bounds offset
+  - **Word colors**: 10-color palette assigned per wordId for visual clarity
+  - **Anchor selection**: Click on filled cell selects it as anchor for word placement, updates input area
+  - **New cell highlight**: `markNewCells()` highlights recently placed cells with auto-clear after 600ms
+  - **Anchor highlights**: `updateAnchorHighlights()` marks all filled cells as clickable anchors
+  - **Debug mode**: `toggleDebugRender()` shows/hides `(row,col)` coordinate labels on each cell
+  - **State management**: `clearRenderedState()` resets all rendering state for board reset
+- `style.css` — New styles for:
+  - `.cell__letter` — letter span with pointer-events: none
+  - `.cell__coord` — debug coordinate label (absolute positioned, 7px font)
+  - `.cell-intersection` — blue inner glow for crossing cells
+  - `.cell-anchor--selected` — accent highlight for selected anchor
+  - `.cell` position: relative for coord label positioning
+- `tests/test-render.js` — Unit tests for rendering (25 tests, all passing):
+  - UIModule API verification
+  - Empty board render
+  - Single word render (HALO)
+  - Intersection render (SELASA + LAOS)
+  - markNewCells, updateAnchorHighlights, clearRenderedState
+  - Debug mode toggle render
+  - Diffing: add/remove words and re-render
+  - Multiple directions (right, left, down, up)
+  - Bounds change detection and grid reconfiguration
