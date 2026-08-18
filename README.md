@@ -37,7 +37,8 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 │   └── kbbi.json       # Data KBBI (Kamus Besar Bahasa Indonesia)
 ├── tests/
 │   ├── test-board.js   # Unit test BoardModule (88 tests)
-│   └── test-render.js  # Unit test renderBoard (25 tests)
+│   ├── test-render.js  # Unit test renderBoard (25 tests)
+│   └── test-zoom.js    # Unit test ZoomModule (50 tests)
 ├── scripts/            # Skrip utilitas (scraping, dll)
 ├── CHANGELOG.md        # Riwayat perubahan
 └── README.md           # Dokumentasi proyek
@@ -49,7 +50,7 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 - [x] **Tahap 01** — Fondasi Proyek & Struktur File
 - [x] **Tahap 02** — Desain Grid/Board — Model Data
 - [x] **Tahap 03** — Rendering Grid — DOM-based Grid
-- [ ] **Tahap 04** — Rendering Grid — Scroll & Zoom
+- [x] **Tahap 04** — Rendering Grid — Scroll & Zoom
 
 ### Fase 2: KBBI & Validasi Kata
 - [ ] **Tahap 05** — Sumber Data KBBI

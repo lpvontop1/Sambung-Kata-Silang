@@ -1,6 +1,6 @@
 /* ============================================================
    SAMBUNG KATA SILANG — Stylesheet
-   Tahap 01: Fondasi Proyek & Struktur File
+   Tahap 04: Rendering Grid — Scroll & Zoom
    ============================================================ */
 
 /* -----------------------------
@@ -337,6 +337,17 @@ input, select {
   justify-content: center;
   padding: 20px;
   background: var(--bg-primary);
+  cursor: grab;
+  /* Smooth scrolling */
+  scroll-behavior: smooth;
+}
+
+.board-container--panning {
+  cursor: grabbing;
+}
+
+.board-container--zoomed {
+  cursor: grab;
 }
 
 .board-grid {
@@ -346,8 +357,9 @@ input, select {
   border: 2px solid var(--cell-border);
   border-radius: var(--border-radius);
   padding: 2px;
-  transition: transform var(--transition-normal);
-  transform-origin: center center;
+  transition: transform 0.2s ease;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .board-placeholder {
@@ -443,21 +455,26 @@ input, select {
   bottom: 12px;
   right: 12px;
   display: flex;
+  align-items: center;
   gap: 4px;
   z-index: var(--z-board);
+  background: var(--bg-secondary);
+  border: 1px solid var(--cell-border);
+  border-radius: var(--border-radius-lg);
+  padding: 4px 8px;
 }
 
 .zoom-btn {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-secondary);
+  background: transparent;
   color: var(--text-secondary);
-  border: 1px solid var(--cell-border);
+  border: 1px solid transparent;
   border-radius: var(--border-radius);
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 700;
   transition: all var(--transition-fast);
 }
@@ -466,6 +483,17 @@ input, select {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border-color: var(--accent);
+}
+
+/* Zoom level display */
+.zoom-level {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+  user-select: none;
 }
 
 /* -----------------------------
@@ -865,12 +893,18 @@ input, select {
   .zoom-controls {
     bottom: 8px;
     right: 8px;
+    padding: 2px 4px;
   }
 
   .zoom-btn {
-    width: 32px;
-    height: 32px;
-    font-size: 1rem;
+    width: 28px;
+    height: 28px;
+    font-size: 0.9rem;
+  }
+
+  .zoom-level {
+    font-size: 0.65rem;
+    min-width: 30px;
   }
 }
 
@@ -886,6 +920,42 @@ input, select {
   .game-title {
     font-size: 2.2rem;
   }
+}
+
+/* -----------------------------
+   MINIMAP
+   ----------------------------- */
+.minimap {
+  position: absolute;
+  bottom: 52px;
+  right: 12px;
+  width: 120px;
+  height: 90px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--cell-border);
+  border-radius: var(--border-radius);
+  z-index: var(--z-board);
+  overflow: hidden;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
+}
+
+.minimap:hover {
+  opacity: 1;
+}
+
+.minimap__canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.minimap__viewport {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  background: rgba(233, 69, 96, 0.1);
+  border-radius: 1px;
+  pointer-events: none;
 }
 
 /* -----------------------------

@@ -1,6 +1,6 @@
 /* ============================================================
    SAMBUNG KATA SILANG — Game Logic
-   Tahap 03: Rendering Grid — DOM-based Grid
+   Tahap 04: Rendering Grid — Scroll & Zoom
    ============================================================ */
 
 'use strict';
@@ -629,9 +629,362 @@ const TurnModule = (() => {
 
 
 // ============================================================
+// --- ZOOM MODULE ---
+// Manages board zoom, pan/drag, and scroll-to-word functionality.
+// Tahap 04: Scroll & Zoom
+// ============================================================
+const ZoomModule = (() => {
+  // --------------------------------------------------------
+  // Zoom State
+  // --------------------------------------------------------
+  const MIN_ZOOM = 0.5;
+  const MAX_ZOOM = 2.0;
+  const ZOOM_STEP = 0.1;
+  const DEFAULT_ZOOM = 1.0;
+
+  let currentZoom = DEFAULT_ZOOM;
+
+  // --------------------------------------------------------
+  // Pan/Drag State
+  // --------------------------------------------------------
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let scrollStartX = 0;
+  let scrollStartY = 0;
+
+  // --------------------------------------------------------
+  // Pinch-to-Zoom State (Touch)
+  // --------------------------------------------------------
+  let lastPinchDistance = 0;
+
+  // --------------------------------------------------------
+  // Zoom Methods
+  // --------------------------------------------------------
+
+  /**
+   * Set zoom level directly.
+   * @param {number} level - Zoom level (0.5 to 2.0)
+   * @param {boolean} [animate=true] - Use smooth transition
+   */
+  function setZoom(level, animate = true) {
+    currentZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, level));
+    applyZoom(animate);
+  }
+
+  /**
+   * Zoom in by one step.
+   * @param {boolean} [animate=true]
+   */
+  function zoomIn(animate = true) {
+    setZoom(currentZoom + ZOOM_STEP, animate);
+  }
+
+  /**
+   * Zoom out by one step.
+   * @param {boolean} [animate=true]
+   */
+  function zoomOut(animate = true) {
+    setZoom(currentZoom - ZOOM_STEP, animate);
+  }
+
+  /**
+   * Reset zoom to default (1.0x).
+   * @param {boolean} [animate=true]
+   */
+  function resetZoom(animate = true) {
+    currentZoom = DEFAULT_ZOOM;
+    applyZoom(animate);
+
+    // Also center the board
+    centerBoard();
+  }
+
+  /**
+   * Get current zoom level.
+   * @returns {number}
+   */
+  function getLevel() {
+    return currentZoom;
+  }
+
+  /**
+   * Apply the current zoom level to the DOM.
+   * @param {boolean} [animate=true]
+   */
+  function applyZoom(animate = true) {
+    const gridEl = document.getElementById('board-grid');
+    const container = document.getElementById('board-container');
+    if (!gridEl) return;
+
+    // Set transition based on animate flag
+    if (animate) {
+      gridEl.style.transition = 'transform 0.2s ease';
+    } else {
+      gridEl.style.transition = 'none';
+    }
+
+    gridEl.style.transform = `scale(${currentZoom})`;
+
+    // Update zoom level display
+    const zoomLevelEl = document.getElementById('zoom-level');
+    if (zoomLevelEl) {
+      zoomLevelEl.textContent = `${Math.round(currentZoom * 100)}%`;
+    }
+
+    // Update container cursor based on zoom
+    if (container) {
+      if (currentZoom > 1.0) {
+        container.classList.add('board-container--zoomed');
+      } else {
+        container.classList.remove('board-container--zoomed');
+      }
+    }
+
+    // Update minimap after zoom change
+    if (typeof UIModule !== 'undefined') {
+      // Use requestAnimationFrame to avoid layout thrashing
+      requestAnimationFrame(() => {
+        UIModule.updateMinimap();
+      });
+    }
+  }
+
+  /**
+   * Center the board in the container viewport.
+   */
+  function centerBoard() {
+    const container = document.getElementById('board-container');
+    if (!container) return;
+
+    requestAnimationFrame(() => {
+      container.scrollTo({
+        left: (container.scrollWidth - container.clientWidth) / 2,
+        top: (container.scrollHeight - container.clientHeight) / 2,
+        behavior: 'smooth'
+      });
+    });
+  }
+
+  // --------------------------------------------------------
+  // Ctrl+Scroll Wheel Zoom
+  // --------------------------------------------------------
+
+  /**
+   * Handle wheel event on board container for Ctrl+scroll zoom.
+   * @param {WheelEvent} e
+   */
+  function handleWheelZoom(e) {
+    if (!e.ctrlKey && !e.metaKey) return; // Only zoom with Ctrl/Cmd
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    setZoom(currentZoom + delta);
+  }
+
+  // --------------------------------------------------------
+  // Pan / Drag
+  // --------------------------------------------------------
+
+  /**
+   * Start panning the board (mouse drag or touch drag).
+   * @param {number} clientX
+   * @param {number} clientY
+   */
+  function startPan(clientX, clientY) {
+    if (currentZoom <= 1.0) return; // Only pan when zoomed
+
+    const container = document.getElementById('board-container');
+    if (!container) return;
+
+    isPanning = true;
+    panStartX = clientX;
+    panStartY = clientY;
+    scrollStartX = container.scrollLeft;
+    scrollStartY = container.scrollTop;
+
+    container.classList.add('board-container--panning');
+  }
+
+  /**
+   * Update pan position during drag.
+   * @param {number} clientX
+   * @param {number} clientY
+   */
+  function updatePan(clientX, clientY) {
+    if (!isPanning) return;
+
+    const container = document.getElementById('board-container');
+    if (!container) return;
+
+    const dx = panStartX - clientX;
+    const dy = panStartY - clientY;
+
+    container.scrollLeft = scrollStartX + dx;
+    container.scrollTop = scrollStartY + dy;
+  }
+
+  /**
+   * End panning.
+   */
+  function endPan() {
+    if (!isPanning) return;
+
+    isPanning = false;
+
+    const container = document.getElementById('board-container');
+    if (container) {
+      container.classList.remove('board-container--panning');
+    }
+  }
+
+  // --------------------------------------------------------
+  // Pinch-to-Zoom (Touch)
+  // --------------------------------------------------------
+
+  /**
+   * Calculate distance between two touch points.
+   * @param {Touch} t1
+   * @param {Touch} t2
+   * @returns {number}
+   */
+  function getTouchDistance(t1, t2) {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /**
+   * Handle touchstart for pinch-to-zoom detection.
+   * @param {TouchEvent} e
+   */
+  function handleTouchStart(e) {
+    if (e.touches.length === 2) {
+      lastPinchDistance = getTouchDistance(e.touches[0], e.touches[1]);
+    } else if (e.touches.length === 1 && currentZoom > 1.0) {
+      startPan(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }
+
+  /**
+   * Handle touchmove for pinch-to-zoom and pan.
+   * @param {TouchEvent} e
+   */
+  function handleTouchMove(e) {
+    if (e.touches.length === 2) {
+      // Pinch-to-zoom
+      e.preventDefault();
+      const currentDistance = getTouchDistance(e.touches[0], e.touches[1]);
+      if (lastPinchDistance > 0) {
+        const scale = currentDistance / lastPinchDistance;
+        setZoom(currentZoom * scale, false);
+      }
+      lastPinchDistance = currentDistance;
+    } else if (e.touches.length === 1 && isPanning) {
+      e.preventDefault();
+      updatePan(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }
+
+  /**
+   * Handle touchend.
+   */
+  function handleTouchEnd() {
+    lastPinchDistance = 0;
+    endPan();
+  }
+
+  // --------------------------------------------------------
+  // Double-click to Reset Zoom
+  // --------------------------------------------------------
+
+  let lastClickTime = 0;
+  let lastClickX = 0;
+  let lastClickY = 0;
+
+  /**
+   * Handle double-click/double-tap on board container to reset zoom.
+   * @param {MouseEvent} e
+   */
+  function handleDoubleClick(e) {
+    // Don't reset if clicking on a cell (anchor selection)
+    if (e.target.closest('.cell-filled')) return;
+
+    resetZoom();
+  }
+
+  // --------------------------------------------------------
+  // Event Binding
+  // --------------------------------------------------------
+
+  /**
+   * Bind all zoom/pan event listeners to the board container.
+   */
+  function bindEvents() {
+    const container = document.getElementById('board-container');
+    if (!container) return;
+
+    // Ctrl+scroll wheel zoom
+    container.addEventListener('wheel', handleWheelZoom, { passive: false });
+
+    // Mouse drag for pan
+    container.addEventListener('mousedown', (e) => {
+      // Only pan with middle button or left button when zoomed
+      if (e.button === 1 || (e.button === 0 && currentZoom > 1.0 && !e.target.closest('.cell-filled'))) {
+        e.preventDefault();
+        startPan(e.clientX, e.clientY);
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      updatePan(e.clientX, e.clientY);
+    });
+
+    document.addEventListener('mouseup', () => {
+      endPan();
+    });
+
+    // Touch events for pinch-to-zoom and pan
+    container.addEventListener('touchstart', handleTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd);
+
+    // Double-click to reset zoom
+    container.addEventListener('dblclick', handleDoubleClick);
+
+    // Scroll event to update minimap viewport
+    container.addEventListener('scroll', () => {
+      requestAnimationFrame(() => {
+        if (typeof UIModule !== 'undefined') {
+          UIModule.updateMinimap();
+        }
+      });
+    }, { passive: true });
+  }
+
+  // --------------------------------------------------------
+  // Public API
+  // --------------------------------------------------------
+  return {
+    setZoom,
+    zoomIn,
+    zoomOut,
+    resetZoom,
+    getLevel,
+    applyZoom,
+    centerBoard,
+    bindEvents
+  };
+})();
+
+
+// ============================================================
 // --- UI MODULE ---
 // Manages DOM rendering, screen navigation, and user interaction.
 // Tahap 03: renderBoard with diffing, CSS Grid, debug mode
+// Tahap 04: scrollToWord, pan/drag, minimap
 // ============================================================
 const UIModule = (() => {
   // Screen management
@@ -824,6 +1177,9 @@ const UIModule = (() => {
     if (boundsChanged && boardCells.length > 0) {
       ensureEmptyCells(gridEl, bounds, boardCellMap);
     }
+
+    // --- Step 5: Update minimap after render ---
+    updateMinimap();
   }
 
   /**
@@ -1103,6 +1459,205 @@ const UIModule = (() => {
   }
 
   // --------------------------------------------------------
+  // Scroll to Word — Tahap 04
+  // --------------------------------------------------------
+
+  /**
+   * Scroll the board container so that the specified word is centered
+   * in the viewport. Accounts for current zoom level.
+   * @param {Word} word - The word object to scroll to
+   * @param {boolean} [smooth=true] - Use smooth scrolling
+   */
+  function scrollToWord(word, smooth = true) {
+    const container = document.getElementById('board-container');
+    const gridEl = document.getElementById('board-grid');
+    if (!container || !gridEl || !word) return;
+
+    const bounds = BoardModule.getBounds();
+    if (bounds.minRow === bounds.maxRow && bounds.minCol === bounds.maxCol) return;
+
+    // Calculate the center position of the word in grid coordinates
+    const positions = BoardModule.getWordCellPositions(word);
+    if (positions.length === 0) return;
+
+    // Find center of the word
+    let centerRow = 0, centerCol = 0;
+    for (const pos of positions) {
+      centerRow += pos.row;
+      centerCol += pos.col;
+    }
+    centerRow /= positions.length;
+    centerCol /= positions.length;
+
+    // Convert grid coordinates to pixel position
+    const cellSize = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--cell-size')) || 40;
+    const zoom = ZoomModule.getLevel();
+
+    // Pixel position of the word center relative to grid origin
+    const gridPadding = 2; // board-grid padding
+    const pixelX = gridPadding + (centerCol - bounds.minCol) * cellSize + cellSize / 2;
+    const pixelY = gridPadding + (centerRow - bounds.minRow) * cellSize + cellSize / 2;
+
+    // Account for zoom
+    const zoomedX = pixelX * zoom;
+    const zoomedY = pixelY * zoom;
+
+    // Scroll to center the word in the container viewport
+    const targetScrollLeft = zoomedX - container.clientWidth / 2;
+    const targetScrollTop = zoomedY - container.clientHeight / 2;
+
+    if (smooth) {
+      container.scrollTo({
+        left: Math.max(0, targetScrollLeft),
+        top: Math.max(0, targetScrollTop),
+        behavior: 'smooth'
+      });
+    } else {
+      container.scrollLeft = Math.max(0, targetScrollLeft);
+      container.scrollTop = Math.max(0, targetScrollTop);
+    }
+  }
+
+  /**
+   * Scroll to a specific cell position on the board.
+   * @param {number} row
+   * @param {number} col
+   * @param {boolean} [smooth=true]
+   */
+  function scrollToCell(row, col, smooth = true) {
+    const container = document.getElementById('board-container');
+    if (!container) return;
+
+    const cellEl = renderedCells.get(BoardModule.cellKey(row, col));
+    if (!cellEl) return;
+
+    // Get cell's position relative to the container
+    const zoom = ZoomModule.getLevel();
+    const cellRect = cellEl.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+
+    // Calculate desired scroll position to center the cell
+    const offsetLeft = cellEl.offsetLeft * zoom;
+    const offsetTop = cellEl.offsetTop * zoom;
+
+    const targetScrollLeft = offsetLeft - container.clientWidth / 2 + cellEl.offsetWidth * zoom / 2;
+    const targetScrollTop = offsetTop - container.clientHeight / 2 + cellEl.offsetHeight * zoom / 2;
+
+    if (smooth) {
+      container.scrollTo({
+        left: Math.max(0, targetScrollLeft),
+        top: Math.max(0, targetScrollTop),
+        behavior: 'smooth'
+      });
+    } else {
+      container.scrollLeft = Math.max(0, targetScrollLeft);
+      container.scrollTop = Math.max(0, targetScrollTop);
+    }
+  }
+
+  // --------------------------------------------------------
+  // Minimap — Tahap 04
+  // --------------------------------------------------------
+
+  /** @type {boolean} Whether minimap is visible */
+  let minimapVisible = true;
+
+  /**
+   * Update the minimap to reflect current board state and viewport position.
+   */
+  function updateMinimap() {
+    const minimapEl = document.getElementById('minimap');
+    const canvas = document.getElementById('minimap-canvas');
+    const viewportEl = document.getElementById('minimap-viewport');
+    const container = document.getElementById('board-container');
+    const gridEl = document.getElementById('board-grid');
+
+    if (!minimapEl || !canvas || !viewportEl || !container || !gridEl) return;
+
+    const bounds = BoardModule.getBounds();
+    const totalRows = bounds.maxRow - bounds.minRow + 1;
+    const totalCols = bounds.maxCol - bounds.minCol + 1;
+
+    if (totalRows <= 0 || totalCols <= 0) {
+      minimapEl.style.display = 'none';
+      return;
+    }
+
+    if (!minimapVisible) {
+      minimapEl.style.display = 'none';
+      return;
+    }
+
+    minimapEl.style.display = '';
+
+    // Set canvas size
+    const minimapWidth = minimapEl.clientWidth;
+    const minimapHeight = minimapEl.clientHeight;
+    canvas.width = minimapWidth;
+    canvas.height = minimapHeight;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, minimapWidth, minimapHeight);
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, minimapWidth, minimapHeight);
+
+    // Calculate cell size in minimap
+    const cellW = minimapWidth / totalCols;
+    const cellH = minimapHeight / totalRows;
+
+    // Draw filled cells
+    const allCells = BoardModule.getAllCells();
+    for (const { row, col, cellData } of allCells) {
+      if (cellData.letter) {
+        const isIntersect = cellData.partOfWords && cellData.partOfWords.length >= 2;
+        ctx.fillStyle = isIntersect ? '#2d6a4f' : '#1e3a5f';
+        ctx.fillRect(
+          (col - bounds.minCol) * cellW,
+          (row - bounds.minRow) * cellH,
+          cellW,
+          cellH
+        );
+      }
+    }
+
+    // Calculate viewport indicator position
+    const zoom = ZoomModule.getLevel();
+    const gridWidth = gridEl.scrollWidth;
+    const gridHeight = gridEl.scrollHeight;
+
+    if (gridWidth > 0 && gridHeight > 0) {
+      const vpLeft = (container.scrollLeft / (gridWidth * zoom)) * minimapWidth;
+      const vpTop = (container.scrollTop / (gridHeight * zoom)) * minimapHeight;
+      const vpWidth = (container.clientWidth / (gridWidth * zoom)) * minimapWidth;
+      const vpHeight = (container.clientHeight / (gridHeight * zoom)) * minimapHeight;
+
+      viewportEl.style.left = `${Math.max(0, vpLeft)}px`;
+      viewportEl.style.top = `${Math.max(0, vpTop)}px`;
+      viewportEl.style.width = `${Math.min(minimapWidth - vpLeft, vpWidth)}px`;
+      viewportEl.style.height = `${Math.min(minimapHeight - vpTop, vpHeight)}px`;
+    }
+  }
+
+  /**
+   * Toggle minimap visibility.
+   * @param {boolean} [visible] - If omitted, toggle current state
+   */
+  function toggleMinimap(visible) {
+    minimapVisible = visible !== undefined ? visible : !minimapVisible;
+    const minimapEl = document.getElementById('minimap');
+    if (minimapEl) {
+      minimapEl.style.display = minimapVisible ? '' : 'none';
+    }
+    if (minimapVisible) {
+      updateMinimap();
+    }
+  }
+
+  // --------------------------------------------------------
   // Public API
   // --------------------------------------------------------
   return {
@@ -1114,7 +1669,10 @@ const UIModule = (() => {
     clearRenderedState,
     toggleDebugRender,
     getSelectedAnchor: () => selectedAnchorKey,
-    scrollToWord:    (word) => { /* Tahap 04 */ },
+    scrollToWord,
+    scrollToCell,
+    updateMinimap,
+    toggleMinimap,
     updateHUD:       (data) => { /* Tahap 39 */ },
     showAutocomplete:(suggestions) => { /* Tahap 38 */ },
     animatePlacement:(cells) => { /* Tahap 43 */ },
@@ -1179,6 +1737,7 @@ const AIModule = (() => {
 // ============================================================
 // --- GAME CONTROLLER ---
 // Main game initialization and event binding.
+// Tahap 04: Zoom via ZoomModule, minimap, scroll-to-word
 // ============================================================
 const GameController = (() => {
   let selectedMode = 'classic';
@@ -1193,11 +1752,15 @@ const GameController = (() => {
     bindGameEvents();
     bindSettingsEvents();
 
+    // Bind zoom/pan events
+    ZoomModule.bindEvents();
+
     // Start at main menu
     UIModule.showScreen('menu');
 
-    console.log('[Sambung Kata Silang] Initialized — Tahap 03');
+    console.log('[Sambung Kata Silang] Initialized — Tahap 04');
     console.log('[BoardModule] Available:', Object.keys(BoardModule).join(', '));
+    console.log('[ZoomModule] Available:', Object.keys(ZoomModule).join(', '));
     console.log('[UIModule] Available:', Object.keys(UIModule).join(', '));
   }
 
@@ -1265,17 +1828,17 @@ const GameController = (() => {
       }
     });
 
-    // Zoom controls
+    // Zoom controls — now using ZoomModule
     document.getElementById('btn-zoom-in')?.addEventListener('click', () => {
-      zoomBoard(0.1);
+      ZoomModule.zoomIn();
     });
 
     document.getElementById('btn-zoom-out')?.addEventListener('click', () => {
-      zoomBoard(-0.1);
+      ZoomModule.zoomOut();
     });
 
     document.getElementById('btn-zoom-reset')?.addEventListener('click', () => {
-      resetZoom();
+      ZoomModule.resetZoom();
     });
 
     // Game over buttons
@@ -1319,6 +1882,9 @@ const GameController = (() => {
     BoardModule.reset();
     UIModule.clearRenderedState();
 
+    // Reset zoom to default
+    ZoomModule.resetZoom(false);
+
     // Update HUD with selected mode
     const hudMode = document.getElementById('hud-mode');
     if (hudMode) {
@@ -1351,25 +1917,6 @@ const GameController = (() => {
     input.value = '';
   }
 
-  // --- ZOOM (stub for Tahap 04) ---
-  let currentZoom = 1.0;
-
-  function zoomBoard(delta) {
-    currentZoom = Math.max(0.5, Math.min(2.0, currentZoom + delta));
-    const grid = document.getElementById('board-grid');
-    if (grid) {
-      grid.style.transform = `scale(${currentZoom})`;
-    }
-  }
-
-  function resetZoom() {
-    currentZoom = 1.0;
-    const grid = document.getElementById('board-grid');
-    if (grid) {
-      grid.style.transform = 'scale(1)';
-    }
-  }
-
   // --- THEME ---
   function toggleTheme(theme) {
     if (theme === 'light') {
@@ -1389,15 +1936,15 @@ const GameController = (() => {
       document.documentElement.style.setProperty('--text-muted', '#6c6c80');
       document.documentElement.style.setProperty('--cell-border', '#2a2a4a');
     }
+    // Re-render minimap with new theme colors
+    UIModule.updateMinimap();
   }
 
   // Public API
   return {
     init,
     startGame,
-    submitWord,
-    zoomBoard,
-    resetZoom
+    submitWord
   };
 })();
 

@@ -108,11 +108,17 @@
           <!-- Cells will be rendered dynamically by game.js -->
           <div class="board-placeholder">Tekan "Main" untuk memulai</div>
         </div>
+        <!-- Minimap -->
+        <div id="minimap" class="minimap">
+          <canvas id="minimap-canvas" class="minimap__canvas"></canvas>
+          <div id="minimap-viewport" class="minimap__viewport"></div>
+        </div>
         <!-- Zoom Controls -->
         <div id="zoom-controls" class="zoom-controls">
+          <button id="btn-zoom-out" class="zoom-btn" title="Zoom Out">−</button>
+          <span id="zoom-level" class="zoom-level">100%</span>
           <button id="btn-zoom-in" class="zoom-btn" title="Zoom In">+</button>
           <button id="btn-zoom-reset" class="zoom-btn" title="Reset Zoom">⟲</button>
-          <button id="btn-zoom-out" class="zoom-btn" title="Zoom Out">−</button>
         </div>
       </div>
 
