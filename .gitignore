@@ -1,0 +1,24 @@
+# Editor / IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (if added later)
+node_modules/
+package-lock.json
+
+# Build / Dist
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temp
+tmp/
+temp/

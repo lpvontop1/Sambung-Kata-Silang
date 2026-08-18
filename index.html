@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Sambung Kata Silang — Game hybrid Sambung Kata + Domino + Teka-teki Silang berbasis web">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Sambung Kata Silang</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ============================== -->
+  <!-- MAIN MENU SCREEN               -->
+  <!-- ============================== -->
+  <div id="screen-menu" class="screen screen--active">
+    <div class="menu-container">
+      <h1 class="game-title">Sambung Kata Silang</h1>
+      <p class="game-subtitle">Sambung &bull; Silang &bull; Domino Kata</p>
+      <div class="menu-buttons">
+        <button id="btn-play" class="btn btn--primary">Main</button>
+        <button id="btn-settings" class="btn btn--secondary">Pengaturan</button>
+        <button id="btn-about" class="btn btn--secondary">Tentang</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== -->
+  <!-- MODE SELECTION SCREEN           -->
+  <!-- ============================== -->
+  <div id="screen-mode" class="screen">
+    <div class="mode-container">
+      <h2 class="screen-title">Pilih Mode</h2>
+      <div class="mode-cards">
+        <button class="mode-card" data-mode="classic">
+          <span class="mode-card__icon">🏛️</span>
+          <span class="mode-card__name">Classic</span>
+          <span class="mode-card__desc">3 nyawa, tanpa timer</span>
+        </button>
+        <button class="mode-card" data-mode="blitz">
+          <span class="mode-card__icon">⚡</span>
+          <span class="mode-card__name">Blitz</span>
+          <span class="mode-card__desc">15 detik/giliran</span>
+        </button>
+        <button class="mode-card" data-mode="infinite">
+          <span class="mode-card__icon">∞</span>
+          <span class="mode-card__name">Infinite</span>
+          <span class="mode-card__desc">Tanpa nyawa, hanya skor</span>
+        </button>
+        <button class="mode-card" data-mode="hard">
+          <span class="mode-card__icon">💀</span>
+          <span class="mode-card__name">Hard</span>
+          <span class="mode-card__desc">1 nyawa saja</span>
+        </button>
+        <button class="mode-card" data-mode="chaos">
+          <span class="mode-card__icon">🌪️</span>
+          <span class="mode-card__name">Chaos</span>
+          <span class="mode-card__desc">1 nyawa + 10 detik + arah acak</span>
+        </button>
+      </div>
+      <div class="player-config">
+        <label for="player-count">Jumlah Pemain:</label>
+        <select id="player-count">
+          <option value="1">1 Pemain</option>
+          <option value="2">2 Pemain</option>
+          <option value="3">3 Pemain</option>
+          <option value="4">4 Pemain</option>
+        </select>
+      </div>
+      <button id="btn-start-game" class="btn btn--primary">Mulai Game</button>
+      <button id="btn-back-menu" class="btn btn--secondary">Kembali</button>
+    </div>
+  </div>
+
+  <!-- ============================== -->
+  <!-- GAME SCREEN                    -->
+  <!-- ============================== -->
+  <div id="screen-game" class="screen">
+    <div class="game-layout">
+
+      <!-- HUD (Heads-Up Display) -->
+      <div id="hud" class="hud">
+        <div class="hud__item hud__mode">
+          <span class="hud__label">Mode</span>
+          <span id="hud-mode" class="hud__value">Classic</span>
+        </div>
+        <div class="hud__item hud__score">
+          <span class="hud__label">Skor</span>
+          <span id="hud-score" class="hud__value">0</span>
+        </div>
+        <div class="hud__item hud__lives">
+          <span class="hud__label">Nyawa</span>
+          <span id="hud-lives" class="hud__value">❤️❤️❤️</span>
+        </div>
+        <div class="hud__item hud__timer">
+          <span class="hud__label">Waktu</span>
+          <span id="hud-timer" class="hud__value">--</span>
+        </div>
+        <div class="hud__item hud__turn">
+          <span class="hud__label">Giliran</span>
+          <span id="hud-turn" class="hud__value">P1</span>
+        </div>
+      </div>
+
+      <!-- GAME BOARD -->
+      <div id="board-container" class="board-container">
+        <div id="board-grid" class="board-grid">
+          <!-- Cells will be rendered dynamically by game.js -->
+          <div class="board-placeholder">Tekan "Main" untuk memulai</div>
+        </div>
+        <!-- Zoom Controls -->
+        <div id="zoom-controls" class="zoom-controls">
+          <button id="btn-zoom-in" class="zoom-btn" title="Zoom In">+</button>
+          <button id="btn-zoom-reset" class="zoom-btn" title="Reset Zoom">⟲</button>
+          <button id="btn-zoom-out" class="zoom-btn" title="Zoom Out">−</button>
+        </div>
+      </div>
+
+      <!-- INPUT AREA -->
+      <div id="input-area" class="input-area">
+        <div class="input-area__anchor-info">
+          <span class="input-area__label">Anchor:</span>
+          <span id="anchor-letter" class="input-area__anchor-letter">-</span>
+          <span id="anchor-position" class="input-area__anchor-pos">(-,-)</span>
+        </div>
+        <div class="input-area__direction">
+          <span class="input-area__label">Arah:</span>
+          <div id="direction-buttons" class="direction-buttons">
+            <button class="dir-btn" data-dir="right" title="Kanan">→</button>
+            <button class="dir-btn" data-dir="left" title="Kiri">←</button>
+            <button class="dir-btn" data-dir="down" title="Bawah">↓</button>
+            <button class="dir-btn" data-dir="up" title="Atas">↑</button>
+          </div>
+        </div>
+        <div class="input-area__word-input">
+          <input type="text" id="word-input" class="word-input" placeholder="Ketik kata..." autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button id="btn-submit-word" class="btn btn--primary btn--submit">Kirim</button>
+        </div>
+        <div id="autocomplete-suggestions" class="autocomplete-suggestions">
+          <!-- Autocomplete suggestions rendered dynamically -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================== -->
+  <!-- GAME OVER SCREEN               -->
+  <!-- ============================== -->
+  <div id="screen-gameover" class="screen">
+    <div class="gameover-container">
+      <h2 class="screen-title">Game Over</h2>
+      <div id="gameover-results" class="gameover-results">
+        <!-- Results rendered dynamically -->
+      </div>
+      <div class="gameover-buttons">
+        <button id="btn-play-again" class="btn btn--primary">Main Lagi</button>
+        <button id="btn-back-menu-gameover" class="btn btn--secondary">Menu Utama</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== -->
+  <!-- SETTINGS SCREEN                -->
+  <!-- ============================== -->
+  <div id="screen-settings" class="screen">
+    <div class="settings-container">
+      <h2 class="screen-title">Pengaturan</h2>
+      <div class="settings-group">
+        <div class="setting-item">
+          <label for="setting-volume">Volume</label>
+          <input type="range" id="setting-volume" min="0" max="100" value="70">
+        </div>
+        <div class="setting-item">
+          <label for="setting-theme">Tema</label>
+          <select id="setting-theme">
+            <option value="dark">Gelap</option>
+            <option value="light">Terang</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="setting-lang">Bahasa</label>
+          <select id="setting-lang">
+            <option value="id">Indonesia</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
+      <button id="btn-back-settings" class="btn btn--secondary">Kembali</button>
+    </div>
+  </div>
+
+  <!-- ============================== -->
+  <!-- ABOUT SCREEN                   -->
+  <!-- ============================== -->
+  <div id="screen-about" class="screen">
+    <div class="about-container">
+      <h2 class="screen-title">Tentang</h2>
+      <div class="about-content">
+        <p><strong>Sambung Kata Silang</strong> adalah game hybrid yang menggabungkan mekanik <em>Sambung Kata</em>, <em>Domino</em>, dan <em>Teka-teki Silang</em>.</p>
+        <p>Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan, akhiran, atau tengah. Setiap kata baru harus berhubungan dengan kata yang sudah ada di board. Pemain bebas memilih arah penempatan — kanan, kiri, atas, atau bawah — layaknya domino dan crossword sekaligus.</p>
+        <h3>Cara Bermain</h3>
+        <ul>
+          <li>Pilih huruf anchor (huruf yang sudah ada di board)</li>
+          <li>Pilih arah penempatan (→ ← ↓ ↑)</li>
+          <li>Ketik kata yang valid sesutan KBBI</li>
+          <li>Kata harus berawalan/berakhiran huruf anchor sesuai arah</li>
+          <li>Persilangan memberikan bonus poin!</li>
+        </ul>
+      </div>
+      <button id="btn-back-about" class="btn btn--secondary">Kembali</button>
+    </div>
+  </div>
+
+  <!-- ============================== -->
+  <!-- TOAST NOTIFICATION             -->
+  <!-- ============================== -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Load Game Script -->
+  <script src="game.js"></script>
+</body>
+</html>
