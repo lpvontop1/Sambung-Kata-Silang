@@ -35,7 +35,10 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 ├── game.js             # Logika game (modul-modul)
 ├── data/
 │   └── kbbi.json       # Data KBBI (Kamus Besar Bahasa Indonesia)
+├── tests/
+│   └── test-board.js   # Unit test BoardModule (88 tests)
 ├── scripts/            # Skrip utilitas (scraping, dll)
+├── CHANGELOG.md        # Riwayat perubahan
 └── README.md           # Dokumentasi proyek
 ```
 
@@ -43,7 +46,7 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 
 ### Fase 1: Fondasi & Infrastruktur
 - [x] **Tahap 01** — Fondasi Proyek & Struktur File
-- [ ] **Tahap 02** — Desain Grid/Board — Model Data
+- [x] **Tahap 02** — Desain Grid/Board — Model Data
 - [ ] **Tahap 03** — Rendering Grid — DOM-based Grid
 - [ ] **Tahap 04** — Rendering Grid — Scroll & Zoom
 

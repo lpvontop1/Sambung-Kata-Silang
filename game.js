@@ -1,33 +1,520 @@
 /* ============================================================
    SAMBUNG KATA SILANG — Game Logic
-   Tahap 01: Fondasi Proyek & Struktur File
+   Tahap 02: Desain Grid/Board — Model Data
    ============================================================ */
 
 'use strict';
 
 // ============================================================
+// --- UTILITY: UUID Generator ---
+// Generates unique IDs for words and entities.
+// ============================================================
+const UUID = (() => {
+  let counter = 0;
+
+  /**
+   * Generate a simple UUID v4-like string.
+   * Uses crypto.randomUUID() if available, otherwise falls back to a
+   * timestamp + counter + random based ID.
+   * @returns {string} UUID string
+   */
+  function generate() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    // Fallback for older browsers
+    const timestamp = Date.now().toString(36);
+    const count = (counter++).toString(36);
+    const random = Math.random().toString(36).substring(2, 10);
+    return `${timestamp}-${count}-${random}`;
+  }
+
+  /**
+   * Generate a short word-specific ID with prefix.
+   * @param {string} prefix - e.g. 'word', 'player'
+   * @returns {string} Prefixed ID
+   */
+  function prefixed(prefix) {
+    return `${prefix}_${generate()}`;
+  }
+
+  return { generate, prefixed };
+})();
+
+
+// ============================================================
 // --- BOARD MODULE ---
 // Manages the 2D grid, cells, word placement, and board state.
+// Tahap 02: Model Data — Board, CellData, Word
 // ============================================================
 const BoardModule = (() => {
-  // Private state
+  // --------------------------------------------------------
+  // Private State
+  // --------------------------------------------------------
   let cells = new Map();   // key: "row,col" → CellData
   let words = new Map();   // key: wordId → Word
-  let wordSet = new Set(); // Set of uppercase words already placed
+  let wordSet = new Set(); // Set of uppercase word texts already placed
 
-  // CellData: { letter, wordId, direction, partOfWords }
-  // Word: { id, text, startRow, startCol, direction, length, playerId }
+  // Debug mode flag — toggles coordinate display in rendering (Tahap 03)
+  let debugMode = false;
 
-  // Public API (to be implemented in later tahaps)
+  // --------------------------------------------------------
+  // CellData Factory
+  // --------------------------------------------------------
+  /**
+   * Create a CellData object.
+   * @param {string|null} letter - The letter occupying this cell
+   * @param {string|null} wordId - ID of the primary word occupying this cell
+   * @param {'horizontal'|'vertical'|null} direction - Direction of the primary word
+   * @returns {CellData}
+   */
+  function createCellData(letter = null, wordId = null, direction = null) {
+    return {
+      letter,           // string | null — the letter in this cell
+      wordId,           // string | null — primary word ID
+      direction,        // 'horizontal' | 'vertical' | null
+      partOfWords: []   // string[] — array of wordIds this cell belongs to (for intersection detection)
+    };
+  }
+
+  // --------------------------------------------------------
+  // Word Factory
+  // --------------------------------------------------------
+  /**
+   * Create a Word object.
+   * @param {string} text - The word text (uppercase)
+   * @param {number} startRow - Starting row position
+   * @param {number} startCol - Starting column position
+   * @param {'right'|'left'|'down'|'up'} direction - Placement direction
+   * @param {string} playerId - ID of the player who placed this word
+   * @param {string} [id] - Optional ID (auto-generated if omitted)
+   * @returns {Word}
+   */
+  function createWord(text, startRow, startCol, direction, playerId, id = null) {
+    return {
+      id: id || UUID.prefixed('word'),
+      text: text.toUpperCase(),
+      startRow,
+      startCol,
+      direction,        // 'right' | 'left' | 'down' | 'up'
+      length: text.length,
+      playerId
+    };
+  }
+
+  // --------------------------------------------------------
+  // Key Helper
+  // --------------------------------------------------------
+  /**
+   * Generate the Map key for a cell position.
+   * @param {number} row
+   * @param {number} col
+   * @returns {string} Key in format "row,col"
+   */
+  function cellKey(row, col) {
+    return `${row},${col}`;
+  }
+
+  // --------------------------------------------------------
+  // Core Board Methods
+  // --------------------------------------------------------
+
+  /**
+   * Get cell data at a specific position.
+   * @param {number} row
+   * @param {number} col
+   * @returns {CellData|null} CellData if exists, null otherwise
+   */
+  function getCell(row, col) {
+    return cells.get(cellKey(row, col)) || null;
+  }
+
+  /**
+   * Set a cell's data. If the cell already exists and has a letter,
+   * this is an intersection — add the wordId to partOfWords.
+   * @param {number} row
+   * @param {number} col
+   * @param {string} letter - The letter to place
+   * @param {string} wordId - ID of the word placing this cell
+   * @param {'horizontal'|'vertical'} direction - Direction of the word
+   */
+  function setCell(row, col, letter, wordId, direction) {
+    const key = cellKey(row, col);
+    const existing = cells.get(key);
+
+    if (existing) {
+      // Cell already exists — update it
+      existing.letter = letter;
+      // Add wordId to partOfWords if not already there
+      if (!existing.partOfWords.includes(wordId)) {
+        existing.partOfWords.push(wordId);
+      }
+      // Keep the original direction from first word, or update if null
+      if (!existing.direction) {
+        existing.direction = direction;
+      }
+      // If this is a crossing word (different direction), keep both directions tracked
+      // via partOfWords — the cell is an intersection
+    } else {
+      // New cell
+      const cellData = createCellData(letter, wordId, direction);
+      cellData.partOfWords = [wordId];
+      cells.set(key, cellData);
+    }
+  }
+
+  /**
+   * Check if a cell is empty (no letter placed).
+   * A cell that doesn't exist in the Map is also considered empty.
+   * @param {number} row
+   * @param {number} col
+   * @returns {boolean}
+   */
+  function isCellEmpty(row, col) {
+    const cell = cells.get(cellKey(row, col));
+    return !cell || cell.letter === null;
+  }
+
+  /**
+   * Get the bounding box of all filled cells on the board.
+   * Used by the renderer to determine grid dimensions.
+   * @returns {{ minRow: number, maxRow: number, minCol: number, maxCol: number }}
+   */
+  function getBounds() {
+    if (cells.size === 0) {
+      return { minRow: 0, maxRow: 0, minCol: 0, maxCol: 0 };
+    }
+
+    let minRow = Infinity, maxRow = -Infinity;
+    let minCol = Infinity, maxCol = -Infinity;
+
+    for (const key of cells.keys()) {
+      const [r, c] = key.split(',').map(Number);
+      if (r < minRow) minRow = r;
+      if (r > maxRow) maxRow = r;
+      if (c < minCol) minCol = c;
+      if (c > maxCol) maxCol = c;
+    }
+
+    return { minRow, maxRow, minCol, maxCol };
+  }
+
+  /**
+   * Clear a cell — remove its letter and word associations.
+   * If the cell belongs to multiple words (intersection), only remove
+   * the specified wordId. If only one word, remove the cell entirely.
+   * @param {number} row
+   * @param {number} col
+   * @param {string} [wordId] - Optional: remove only this word's association
+   */
+  function clearCell(row, col, wordId = null) {
+    const key = cellKey(row, col);
+    const cell = cells.get(key);
+    if (!cell) return;
+
+    if (wordId) {
+      // Remove specific word association
+      cell.partOfWords = cell.partOfWords.filter(id => id !== wordId);
+      if (cell.partOfWords.length === 0) {
+        // No more words use this cell — remove it
+        cells.delete(key);
+      } else {
+        // Still part of other words — update letter from remaining word
+        // (The letter should be the same for intersections, so no change needed)
+        cell.wordId = cell.partOfWords[0]; // Update primary wordId
+      }
+    } else {
+      // Remove the entire cell
+      cells.delete(key);
+    }
+  }
+
+  // --------------------------------------------------------
+  // Word Management Methods
+  // --------------------------------------------------------
+
+  /**
+   * Add a Word object to the board's word map and wordSet.
+   * @param {Word} word
+   */
+  function addWord(word) {
+    words.set(word.id, word);
+    wordSet.add(word.text.toUpperCase());
+  }
+
+  /**
+   * Get a Word by its ID.
+   * @param {string} wordId
+   * @returns {Word|undefined}
+   */
+  function getWord(wordId) {
+    return words.get(wordId);
+  }
+
+  /**
+   * Check if a word text has already been used on the board.
+   * @param {string} text - Word text (will be uppercased)
+   * @returns {boolean}
+   */
+  function hasWord(text) {
+    return wordSet.has(text.toUpperCase());
+  }
+
+  /**
+   * Remove a word and all its cells from the board.
+   * Cells that are intersections (belong to other words) are preserved.
+   * @param {string} wordId
+   * @returns {boolean} True if word was found and removed
+   */
+  function removeWord(wordId) {
+    const word = words.get(wordId);
+    if (!word) return false;
+
+    // Calculate all cell positions for this word
+    const positions = getWordCellPositions(word);
+
+    // Clear each cell (only this word's association)
+    for (const { row, col } of positions) {
+      clearCell(row, col, wordId);
+    }
+
+    // Remove from maps
+    words.delete(wordId);
+    wordSet.delete(word.text.toUpperCase());
+    return true;
+  }
+
+  /**
+   * Calculate the cell positions for a word based on its
+   * startRow, startCol, direction, and length.
+   * @param {Word} word
+   * @returns {Array<{row: number, col: number, letter: string}>}
+   */
+  function getWordCellPositions(word) {
+    const positions = [];
+    const text = word.text;
+
+    for (let i = 0; i < word.length; i++) {
+      let row = word.startRow;
+      let col = word.startCol;
+
+      switch (word.direction) {
+        case 'right': col += i; break;
+        case 'left':  col -= i; break;
+        case 'down':  row += i; break;
+        case 'up':    row -= i; break;
+      }
+
+      positions.push({
+        row,
+        col,
+        letter: text[i]
+      });
+    }
+
+    return positions;
+  }
+
+  /**
+   * Get the number of filled cells on the board.
+   * @returns {number}
+   */
+  function getCellCount() {
+    return cells.size;
+  }
+
+  /**
+   * Get the number of words placed on the board.
+   * @returns {number}
+   */
+  function getWordCount() {
+    return words.size;
+  }
+
+  /**
+   * Get all cells as an array of { key, row, col, cellData }.
+   * Useful for rendering and debugging.
+   * @returns {Array<{key: string, row: number, col: number, cellData: CellData}>}
+   */
+  function getAllCells() {
+    const result = [];
+    for (const [key, cellData] of cells) {
+      const [row, col] = key.split(',').map(Number);
+      result.push({ key, row, col, cellData });
+    }
+    return result;
+  }
+
+  /**
+   * Get all words as an array.
+   * @returns {Word[]}
+   */
+  function getAllWords() {
+    return Array.from(words.values());
+  }
+
+  /**
+   * Find all anchor cells — cells that are filled and can be used
+   * as starting points for new word placement.
+   * @returns {Array<{row: number, col: number, letter: string, partOfWords: string[]}>}
+   */
+  function getAnchorCells() {
+    const anchors = [];
+    for (const [key, cellData] of cells) {
+      if (cellData.letter !== null) {
+        const [row, col] = key.split(',').map(Number);
+        anchors.push({
+          row,
+          col,
+          letter: cellData.letter,
+          partOfWords: [...cellData.partOfWords]
+        });
+      }
+    }
+    return anchors;
+  }
+
+  /**
+   * Check if a specific cell is an intersection (belongs to 2+ words).
+   * @param {number} row
+   * @param {number} col
+   * @returns {boolean}
+   */
+  function isIntersection(row, col) {
+    const cell = cells.get(cellKey(row, col));
+    return cell ? cell.partOfWords.length >= 2 : false;
+  }
+
+  /**
+   * Toggle debug mode for coordinate display.
+   * @param {boolean} [enabled] - If omitted, toggle current state
+   * @returns {boolean} Current debug mode state
+   */
+  function toggleDebug(enabled) {
+    debugMode = enabled !== undefined ? enabled : !debugMode;
+    return debugMode;
+  }
+
+  /**
+   * Get a serializable snapshot of the board state.
+   * Useful for multiplayer sync and save/load.
+   * @returns {object}
+   */
+  function serialize() {
+    const cellsObj = {};
+    for (const [key, val] of cells) {
+      cellsObj[key] = { ...val, partOfWords: [...val.partOfWords] };
+    }
+    const wordsObj = {};
+    for (const [key, val] of words) {
+      wordsObj[key] = { ...val };
+    }
+    return {
+      cells: cellsObj,
+      words: wordsObj,
+      wordSet: Array.from(wordSet)
+    };
+  }
+
+  /**
+   * Restore board state from a serialized snapshot.
+   * @param {object} data - Output from serialize()
+   */
+  function deserialize(data) {
+    cells.clear();
+    words.clear();
+    wordSet.clear();
+
+    if (data.cells) {
+      for (const [key, val] of Object.entries(data.cells)) {
+        cells.set(key, { ...val, partOfWords: [...(val.partOfWords || [])] });
+      }
+    }
+    if (data.words) {
+      for (const [key, val] of Object.entries(data.words)) {
+        words.set(key, { ...val });
+      }
+    }
+    if (data.wordSet) {
+      for (const w of data.wordSet) {
+        wordSet.add(w);
+      }
+    }
+  }
+
+  /**
+   * Reset the board completely.
+   */
+  function reset() {
+    cells.clear();
+    words.clear();
+    wordSet.clear();
+    debugMode = false;
+  }
+
+  /**
+   * Get a string representation of the board for debugging.
+   * Shows the grid with letters and dots for empty cells.
+   * @returns {string}
+   */
+  function toString() {
+    if (cells.size === 0) return '[Empty Board]';
+
+    const bounds = getBounds();
+    let result = '';
+
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        const cell = cells.get(cellKey(r, c));
+        result += cell && cell.letter ? cell.letter : '.';
+        if (c < bounds.maxCol) result += ' ';
+      }
+      result += '\n';
+    }
+
+    return result.trim();
+  }
+
+  // --------------------------------------------------------
+  // Public API
+  // --------------------------------------------------------
   return {
-    getCell:       (row, col) => { /* Tahap 02 */ },
-    setCell:       (row, col, letter, wordId, direction) => { /* Tahap 02 */ },
-    isCellEmpty:   (row, col) => { /* Tahap 02 */ },
-    getBounds:     () => { /* Tahap 02 */ },
-    clearCell:     (row, col) => { /* Tahap 02 */ },
+    // Core cell methods
+    getCell,
+    setCell,
+    isCellEmpty,
+    getBounds,
+    clearCell,
+
+    // Word management
+    addWord,
+    getWord,
+    hasWord,
+    removeWord,
+    getWordCellPositions,
+
+    // Accessors
     getWords:      () => words,
     getWordSet:    () => wordSet,
-    reset:         () => { cells.clear(); words.clear(); wordSet.clear(); }
+    getCellCount,
+    getWordCount,
+    getAllCells,
+    getAllWords,
+    getAnchorCells,
+    isIntersection,
+
+    // Utility
+    toggleDebug,
+    isDebugMode:   () => debugMode,
+    serialize,
+    deserialize,
+    reset,
+    toString,
+
+    // Factory helpers (exposed for external use)
+    createWord,
+    createCellData,
+    cellKey
   };
 })();
 
@@ -274,7 +761,8 @@ const GameController = (() => {
     // Start at main menu
     UIModule.showScreen('menu');
 
-    console.log('[Sambung Kata Silang] Initialized — Tahap 01');
+    console.log('[Sambung Kata Silang] Initialized — Tahap 02');
+    console.log('[BoardModule] Available:', Object.keys(BoardModule).join(', '));
   }
 
   // --- MENU EVENTS ---
