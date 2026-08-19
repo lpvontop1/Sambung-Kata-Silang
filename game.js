@@ -523,21 +523,349 @@ const BoardModule = (() => {
 // --- KBBI MODULE ---
 // Loads and queries the KBBI dictionary (Trie-based).
 // ============================================================
-const KBBIModule = (() => {
-  let trie = null;       // KBBITrie instance (Tahap 06)
-  let loaded = false;
-  let wordCount = 0;
 
-  // Public API (to be implemented in later tahaps)
+/**
+ * KBBITrie — Prefix tree (Trie) untuk lookup kata cepat.
+ *
+ * Tahap 06 spec:
+ *   - root: TrieNode { children: {}, isEndOfWord: false }
+ *   - insert(word)              — tambah kata (juga ke reverse trie)
+ *   - search(word)              — boolean exact lookup
+ *   - startsWith(prefix)        — boolean, ada kata berawalan prefix?
+ *   - getWordsByPrefix(prefix, limit=20) — autocomplete, DFS dari node prefix
+ *   - getWordsBySuffix(suffix, limit=20) — pake reverse trie, lalu un-reverse
+ *   - loadFromJSON(jsonData)    — batch insert dari {words:[...]}
+ *   - reverseRoot              — root trie terbalik untuk lookup akhiran
+ *
+ * Performance: insert 100.000 kata < 2 detik (object-based children,
+ * no Map overhead). Memory: gunakan plain object untuk children.
+ */
+class KBBITrie {
+  constructor() {
+    // Forward trie — root untuk pencarian awalan & exact match
+    this.root = this._newNode();
+    // Reverse trie — root untuk pencarian akhiran (kata disimpan terbalik)
+    this.reverseRoot = this._newNode();
+    // Hitung kata unik yang sudah di-insert (untuk statistik & test)
+    this._size = 0;
+  }
+
+  /** Factory node — pakai object biasa, bukan Map, untuk efisiensi memory. */
+  _newNode() {
+    return { children: {}, isEndOfWord: false };
+  }
+
+  /** Normalize input ke UPPERCASE. */
+  _normalize(word) {
+    return (typeof word === 'string') ? word.toUpperCase() : '';
+  }
+
+  /**
+   * Insert kata ke forward trie dan reverse trie.
+   * Idempotent — kata yang sama di-insert dua kali tidak menambah _size.
+   */
+  insert(word) {
+    const w = this._normalize(word);
+    if (!w) return;
+    // Forward
+    let node = this.root;
+    for (let i = 0; i < w.length; i++) {
+      const ch = w[i];
+      if (!node.children[ch]) node.children[ch] = this._newNode();
+      node = node.children[ch];
+    }
+    const wasNew = !node.isEndOfWord;
+    node.isEndOfWord = true;
+
+    // Reverse (kata dibalik)
+    let rnode = this.reverseRoot;
+    for (let i = w.length - 1; i >= 0; i--) {
+      const ch = w[i];
+      if (!rnode.children[ch]) rnode.children[ch] = this._newNode();
+      rnode = rnode.children[ch];
+    }
+    rnode.isEndOfWord = true;
+
+    if (wasNew) this._size++;
+  }
+
+  /** Exact match lookup. Case-insensitive (input di-UPPERCASE-kan). */
+  search(word) {
+    const w = this._normalize(word);
+    if (!w) return false;
+    let node = this.root;
+    for (let i = 0; i < w.length; i++) {
+      const ch = w[i];
+      if (!node.children[ch]) return false;
+      node = node.children[ch];
+    }
+    return node.isEndOfWord;
+  }
+
+  /** Boolean — apakah ada minimal satu kata berawalan `prefix`? */
+  startsWith(prefix) {
+    const p = this._normalize(prefix);
+    if (!p) return false;
+    let node = this.root;
+    for (let i = 0; i < p.length; i++) {
+      const ch = p[i];
+      if (!node.children[ch]) return false;
+      node = node.children[ch];
+    }
+    return true;
+  }
+
+  /** Cari node di forward trie yang berakhir di prefix. */
+  _descend(root, str) {
+    let node = root;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (!node.children[ch]) return null;
+      node = node.children[ch];
+    }
+    return node;
+  }
+
+  /**
+   * DFS preorder untuk kumpulkan kata.
+   * @private
+   * @param {TrieNode} node — node saat ini
+   * @param {string}   current — string yang sudah terbentuk
+   * @param {number}   limit  — batas hasil
+   * @param {string[]} out — accumulator
+   */
+  _collect(node, current, limit, out) {
+    if (out.length >= limit) return;
+    if (node.isEndOfWord) {
+      out.push(current);
+      if (out.length >= limit) return;
+    }
+    // Sort keys supaya hasil deterministik (alfabetis)
+    const keys = Object.keys(node.children).sort();
+    for (const ch of keys) {
+      this._collect(node.children[ch], current + ch, limit, out);
+      if (out.length >= limit) return;
+    }
+  }
+
+  /**
+   * Return daftar kata yang berawalan `prefix`, dibatasi `limit`
+   * (default 20, untuk autocomplete). Hasil sorted alfabetis.
+   */
+  getWordsByPrefix(prefix, limit = 20) {
+    const p = this._normalize(prefix);
+    if (!p) return [];
+    const node = this._descend(this.root, p);
+    if (!node) return [];
+    const out = [];
+    this._collect(node, p, limit, out);
+    return out;
+  }
+
+  /**
+   * Return daftar kata yang berakhiran `suffix`, dibatasi `limit`.
+   * Memakai reverse trie: traverse suffix secara terbalik, lalu
+   * kumpulkan kata (yang juga tersimpan terbalik), lalu un-reverse.
+   */
+  getWordsBySuffix(suffix, limit = 20) {
+    const s = this._normalize(suffix);
+    if (!s) return [];
+    // Traverse reverse trie dengan suffix yang dibalik
+    const reversedSuffix = s.split('').reverse().join('');
+    const node = this._descend(this.reverseRoot, reversedSuffix);
+    if (!node) return [];
+    const reversedOut = [];
+    // current dalam collect = reversedSuffix (karena di reverse trie,
+    // kita traverse dari suffix-yang-dibalik lalu menambah huruf di belakang).
+    // Hasilnya adalah kata-kata yang TERSIMPAN terbalik, jadi perlu un-reverse.
+    this._collect(node, reversedSuffix, limit, reversedOut);
+    return reversedOut.map((w) => w.split('').reverse().join(''));
+  }
+
+  /** Batch insert dari objek { version, source, wordCount, words[] }. */
+  loadFromJSON(jsonData) {
+    if (!jsonData || typeof jsonData !== 'object') {
+      throw new Error('KBBITrie.loadFromJSON: jsonData must be an object');
+    }
+    if (!Array.isArray(jsonData.words)) {
+      throw new Error('KBBITrie.loadFromJSON: jsonData.words must be an array');
+    }
+    for (let i = 0; i < jsonData.words.length; i++) {
+      this.insert(jsonData.words[i]);
+    }
+  }
+
+  /** Reset trie ke kondisi kosong (untuk test / reload). */
+  clear() {
+    this.root = this._newNode();
+    this.reverseRoot = this._newNode();
+    this._size = 0;
+  }
+
+  /** Jumlah kata unik yang sudah di-insert. */
+  size() {
+    return this._size;
+  }
+
+  /** Statistik ringan untuk debug. */
+  getStats() {
+    let nodeCount = 0;
+    const walk = (n) => {
+      nodeCount++;
+      for (const k of Object.keys(n.children)) walk(n.children[k]);
+    };
+    walk(this.root);
+    let reverseNodeCount = 0;
+    const walkR = (n) => {
+      reverseNodeCount++;
+      for (const k of Object.keys(n.children)) walkR(n.children[k]);
+    };
+    walkR(this.reverseRoot);
+    return {
+      wordCount: this._size,
+      forwardNodeCount: nodeCount,
+      reverseNodeCount: reverseNodeCount,
+      totalNodeCount: nodeCount + reverseNodeCount,
+    };
+  }
+}
+
+
+const KBBIModule = (() => {
+  // Singleton: satu instance KBBITrie global, di-share selama game berjalan.
+  let trie = null;
+  let loaded = false;        // true setelah loadFromJSON atau loadChunk berhasil
+  let wordCount = 0;
+  let loadedLetters = new Set();   // huruf yang sudah lazy-load (untuk loadChunk)
+
+  function ensureTrie() {
+    if (!trie) trie = new KBBITrie();
+    return trie;
+  }
+
+  // Helper — resolve path chunk file relatif ke dokumen/game.js.
+  // Deteksi environment: kalau `require` + `process.cwd` tersedia → Node
+  // (test/CLI), pakai fs synchronously. Kalau tidak, pakai fetch (browser;
+  // relative path bekerja karena halaman HTML di-root).
+  // NB: `__dirname` di vm.runInThisContext bernilai '.', jadi tidak bisa
+  // dipakai untuk resolve path file. `process.cwd()` dipakai sebagai gantinya
+  // (test runner selalu menjalankan dari root project).
+  function _readChunkFile(letterLower) {
+    const relPath = `data/kbbi-${letterLower}.json`;
+    return new Promise((resolve, reject) => {
+      if (typeof require === 'function' &&
+          typeof process !== 'undefined' && process && typeof process.cwd === 'function') {
+        // Node environment (tests, CLI)
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const file = path.resolve(process.cwd(), relPath);
+          const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+          resolve(json);
+        } catch (e) {
+          reject(e);
+        }
+      } else if (typeof fetch === 'function') {
+        // Browser environment
+        fetch(relPath)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status} untuk ${relPath}`);
+            return res.json();
+          })
+          .then(resolve, reject);
+      } else {
+        reject(new Error('Tidak ada fetch atau fs — loadChunk tidak bisa baca file'));
+      }
+    });
+  }
+
   return {
-    loadFromJSON:  (jsonData) => { /* Tahap 06 */ },
-    isLoaded:      () => loaded,
-    getWordCount:  () => wordCount,
-    search:        (word) => { /* Tahap 06 */ },
-    startsWith:    (prefix) => { /* Tahap 06 */ },
+    /**
+     * Load seluruh dictionary dari objek JSON {words:[...]}.
+     * Setelah ini, search() dan startsWith() dapat digunakan.
+     */
+    loadFromJSON: (jsonData) => {
+      const t = ensureTrie();
+      t.loadFromJSON(jsonData);
+      loaded = true;
+      wordCount = t.size();
+      loadedLetters.clear();
+      // Tandai semua huruf A-Z sudah loaded
+      for (let i = 65; i <= 90; i++) loadedLetters.add(String.fromCharCode(i));
+    },
+
+    /** Trie sudah berisi data? */
+    isLoaded: () => loaded,
+
+    /** Jumlah kata di trie saat ini. */
+    getWordCount: () => wordCount,
+
+    /** Set huruf yang sudah lazy-loaded via loadChunk (untuk debug). */
+    getLoadedLetters: () => Array.from(loadedLetters).sort(),
+
+    /** Reset state module (utk test). */
+    reset: () => {
+      if (trie) trie.clear();
+      trie = null;
+      loaded = false;
+      wordCount = 0;
+      loadedLetters.clear();
+    },
+
+    /** Expose trie instance untuk test/inspeksi (jangan dipakai di game). */
+    getTrie: () => trie,
+
+    /** Exact lookup. Case-insensitive. */
+    search: (word) => {
+      if (!loaded || !trie) return false;
+      return trie.search(word);
+    },
+
+    /** Boolean — ada kata berawalan `prefix`? */
+    startsWith: (prefix) => {
+      if (!loaded || !trie) return false;
+      return trie.startsWith(prefix);
+    },
+
+    /**
+     * Lazy load chunk per huruf awal.
+     * Membaca data/kbbi-{letter}.json, insert semua kata ke trie.
+     * Idempotent — loadChunk('A') dua kali tidak menambah duplikat.
+     * @param {string} letter — single char A-Z (case-insensitive)
+     * @returns {Promise<number>} jumlah kata baru yang di-insert
+     */
+    loadChunk: async (letter) => {
+      if (typeof letter !== 'string' || letter.length !== 1 ||
+          !/^[A-Za-z]$/.test(letter)) {
+        throw new Error(`loadChunk: letter harus A-Z (got: ${JSON.stringify(letter)})`);
+      }
+      const L = letter.toUpperCase();
+      const before = trie ? trie.size() : 0;
+      const t = ensureTrie();
+      if (loadedLetters.has(L)) {
+        // sudah pernah di-load, tidak ada penambahan
+        return 0;
+      }
+      const json = await _readChunkFile(L.toLowerCase());
+      if (!json || !Array.isArray(json.words)) {
+        throw new Error(`loadChunk: file chunk ${L} tidak valid`);
+      }
+      const beforeSize = t.size();
+      for (let i = 0; i < json.words.length; i++) {
+        t.insert(json.words[i]);
+      }
+      loadedLetters.add(L);
+      wordCount = t.size();
+      // Tandai loaded=true setelah chunk pertama berhasil, supaya
+      // search/startsWith dapat dipanggil (walau hanya untuk huruf ini).
+      loaded = true;
+      return t.size() - beforeSize;
+    },
+
+    // Tahap 08 akan wire ini ke trie.getWordsByPrefix
     getWordsByPrefix: (prefix, limit) => { /* Tahap 08 */ },
+    // Tahap 09 akan wire ini ke trie.getWordsBySuffix
     getWordsBySuffix: (suffix, limit) => { /* Tahap 09 */ },
-    loadChunk:     (letter) => { /* Tahap 06 */ }
   };
 })();
 

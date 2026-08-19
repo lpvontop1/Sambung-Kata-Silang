@@ -224,3 +224,111 @@
   awal" — proyek ini menyediakan KEDUA format (full `kbbi.json` DAN
   26 chunk per-huruf) untuk fleksibilitas maksimum: Tahap 06 (Trie)
   bisa memilih load full sekaligus atau lazy-load per huruf.
+
+## [0.6.0] — Tahap 06: Struktur Data Trie untuk KBBI
+
+### Added
+- `game.js` — **`KBBITrie` class** fully implemented with:
+  - `root: TrieNode` — `{ children: {}, isEndOfWord: false }` (plain object,
+    not Map, for memory efficiency per spec)
+  - `reverseRoot: TrieNode` — reverse trie for suffix search (each word
+    also inserted reversed: KUCING → GNIUK)
+  - `insert(word)` — inserts into both forward & reverse trie;
+    idempotent (duplicate insert does not inflate `_size`)
+  - `search(word)` — boolean exact lookup; case-insensitive
+    (input normalized to UPPERCASE)
+  - `startsWith(prefix)` — boolean, true if any word begins with prefix
+  - `getWordsByPrefix(prefix, limit=20)` — autocomplete; DFS preorder
+    from prefix node, sorted alphabetically for deterministic output
+  - `getWordsBySuffix(suffix, limit=20)` — uses reverse trie:
+    descend reversed-suffix, collect reversed words, then un-reverse
+  - `loadFromJSON(jsonData)` — batch insert from `{words:[...]}`;
+    throws on non-object or missing `words` array
+  - `clear()` — resets both tries to empty
+  - `size()` — count of unique words inserted
+  - `getStats()` — debug helper: word count, forward/reverse node counts
+  - `_descend(root, str)` — private helper, walks a trie following `str`
+  - `_collect(node, current, limit, out)` — private DFS accumulator
+  - Handles hyphenated reduplications (ANAK-ANAK, KUDA-KUDA, MATA-MATA)
+    via regex `^[A-Za-z]+(?:-[A-Za-z]+)*$`
+  - Garbage-input safe: `insert('')`, `insert(null)`, `insert(123)`
+    are all silently ignored
+- `game.js` — **KBBIModule** wired to use singleton KBBITrie:
+  - `loadFromJSON(jsonData)` — delegates to `trie.loadFromJSON`,
+    sets `loaded=true`, marks all letters A–Z as loaded
+  - `isLoaded()` — true after any successful `loadFromJSON` or `loadChunk`
+  - `getWordCount()` — current trie size
+  - `getLoadedLetters()` — array of letters lazy-loaded via `loadChunk`
+    (for debug; empty when full `loadFromJSON` was used)
+  - `getTrie()` — exposes the singleton trie (for tests / inspection)
+  - `reset()` — clears trie, sets `loaded=false`, resets counters
+  - `search(word)` & `startsWith(prefix)` — delegate to trie; return
+    `false` if not loaded yet (safe no-op)
+  - `loadChunk(letter)` — async; lazy-loads `data/kbbi-{letter}.json`,
+    inserts all words into trie, returns # of newly-inserted words;
+    idempotent (re-loading same letter returns 0)
+  - `_readChunkFile(letterLower)` — private; reads chunk file via
+    `fs.readFileSync` (Node) or `fetch` (browser), resolved relative
+    to `process.cwd()` (Node) or HTML document (browser)
+  - `getWordsByPrefix` & `getWordsBySuffix` remain Tahap 08/09 stubs
+    (the underlying `KBBITrie` methods ARE implemented; the KBBIModule
+    wrappers will be wired in their respective tahaps)
+- `tests/test-trie.js` — **146 unit tests** covering:
+  1. Class structure & API surface (all methods exist)
+  2. TrieNode structure (`{children:{}, isEndOfWord:false}`, plain object
+     not Map)
+  3. insert + search basics
+  4. Case-insensitivity (uppercase normalization)
+  5. Hyphenated reduplications (ANAK-ANAK, KUDA-KUDA, MATA-MATA)
+  6. startsWith prefix boolean check (positive, negative, edge cases)
+  7. getWordsByPrefix with limit (autocomplete, default=20, sorted)
+  8. getWordsBySuffix with limit (reverse trie, un-reversed output)
+  9. loadFromJSON batch insert + input validation (throws on garbage)
+  10. Idempotent inserts (size stays same on duplicate insert)
+  11. clear() & size()
+  12. **Performance test**: load 74,536-word dataset in < 2 sec
+      (actual: ~210 ms — 10× under target)
+  13. KBBIModule singleton integration (loadFromJSON, isLoaded,
+      getWordCount, search, startsWith, getTrie returns same instance)
+  14. KBBIModule.loadChunk lazy loading per letter (A, B, C) — Promise
+      return, idempotency, error rejection on invalid letter, case-
+      insensitive letter input
+  15. KBBIModule.reset
+  16. Edge cases: empty string, null, undefined, non-string, single-
+      letter word
+  17. Real KBBI words sanity check (ABADI, BAGUS, CINTA, DUNIA, EMAS,
+      FANA, GUNUNG, HATI, INDONESIA, JALAN, KASIH, LARI, MATA, NAMA,
+      ORANG, PINTU, RUMAH, SEHAT, TANAH, UMUR, WARNA, YANG, ZAMAN,
+      HALO, SELASA) + invalid (XYZQQ, QQQQQ, ASDFGHJKL)
+
+### Performance
+- Loading **74,536 unique Indonesian words** into the trie:
+  ~**210 ms** (well under the 2-second spec target — 10× margin)
+- Per-call search latency: sub-millisecond (Trie prefix walk is O(L)
+  where L is word length)
+- Memory: plain JS objects for `children` (no Map overhead);
+  forward + reverse trie share the same word count
+
+### Notes
+- **Node 24 `require` visibility quirk**: `require` is a CommonJS
+  function-scope parameter, NOT a property of `globalThis`. Scripts
+  executed via `vm.runInThisContext` (as the test files load `game.js`)
+  cannot see `require` unless the host explicitly exposes it. The test
+  file `tests/test-trie.js` does `globalThis.require = require` before
+  loading game.js, so `KBBIModule.loadChunk` can call `require('fs')`
+  inside the vm context. In a browser, `require` is undefined and
+  `loadChunk` falls back to `fetch(relPath)` — which is the correct
+  path for the production environment.
+- **KBBIModule API stubs preserved for later tahaps**: per the tahap-
+  by-tahap structure, `KBBIModule.getWordsByPrefix` and
+  `getWordsBySuffix` are deliberately left as stubs (Tahap 08 and
+  Tahap 09 respectively). The underlying `KBBITrie` methods ARE fully
+  implemented now (so the data structure is complete), but the
+  KBBIModule wrappers that delegate to them are wired in their
+  respective tahaps to keep each tahap's scope tight.
+
+### Files
+- `game.js` — +430 lines (KBBITrie class + KBBIModule wiring)
+- `tests/test-trie.js` — +540 lines (146 tests)
+- `README.md` — Tahap 06 progress checkbox + test inventory
+- `CHANGELOG.md` — this entry
