@@ -31,7 +31,27 @@ function mockGetElementById(id) {
       querySelector: function(sel) { return null; },
       querySelectorAll: function(sel) { return []; },
       addEventListener: function() {},
-      removeEventListener: function() {}
+      removeEventListener: function() {},
+      // Canvas mock for Tahap 04 minimap (updateMinimap calls getContext('2d'))
+      getContext: function() {
+        return {
+          fillRect: function() {}, clearRect: function() {},
+          getImageData: function() { return { data: [] }; },
+          putImageData: function() {},
+          createImageData: function() { return { data: [] }; },
+          setTransform: function() {}, save: function() {}, restore: function() {},
+          scale: function() {}, translate: function() {},
+          beginPath: function() {}, closePath: function() {},
+          moveTo: function() {}, lineTo: function() {}, rect: function() {},
+          fill: function() {}, stroke: function() {}, arc: function() {},
+          fillStyle: '', strokeStyle: '', lineWidth: 1, font: '',
+          textAlign: '',
+          fillText: function() {}, strokeText: function() {},
+          measureText: function() { return { width: 0 }; },
+        };
+      },
+      width: 300, height: 150,
+      toDataURL: function() { return ''; }
     };
     domElements[id] = el;
   }
@@ -61,7 +81,41 @@ global.document = {
       remove: function() {},
       querySelector: function() { return null; },
       querySelectorAll: function() { return []; },
-      addEventListener: function() {}
+      addEventListener: function() {},
+      // Canvas mock for Tahap 04 minimap (updateMinimap calls getContext('2d'))
+      getContext: function() {
+        return {
+          fillRect: function() {},
+          clearRect: function() {},
+          getImageData: function() { return { data: [] }; },
+          putImageData: function() {},
+          createImageData: function() { return { data: [] }; },
+          setTransform: function() {},
+          save: function() {},
+          restore: function() {},
+          scale: function() {},
+          translate: function() {},
+          beginPath: function() {},
+          closePath: function() {},
+          moveTo: function() {},
+          lineTo: function() {},
+          rect: function() {},
+          fill: function() {},
+          stroke: function() {},
+          arc: function() {},
+          fillStyle: '',
+          strokeStyle: '',
+          lineWidth: 1,
+          font: '',
+          textAlign: '',
+          fillText: function() {},
+          strokeText: function() {},
+          measureText: function() { return { width: 0 }; },
+        };
+      },
+      width: 300,
+      height: 150,
+      toDataURL: function() { return ''; },
     };
     return el;
   },

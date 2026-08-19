@@ -150,3 +150,77 @@
   - Rapid zoom changes (20+ steps capped at boundaries)
   - Zoom + renderBoard integration
   - Final reset verification
+
+## [0.5.0] — Tahap 05: Sumber Data KBBI — Scraping & Persiapan
+
+### Added
+- `scripts/scrape-kbbi.js` — Skrip scraping & persiapan dataset KBBI yang
+  dapat dijalankan ulang (rerunnable). Mendukung dua mode:
+  - **Bundled (default)** — menggunakan dataset open-source
+    `aryakdaniswara/kbbi-dataset-kbbi-v` (112.645 entri ekstraksi KBBI V
+    resmi). Cepat (~3 detik) dan deterministik.
+  - **Live** — scraping langsung dari `kbbi.kemdikbud.go.id` dengan
+    rate-limit 1.1 req/detik, retry 3×, dan cache per-huruf di
+    `.cache/kbbi-raw/live-{letter}.json` untuk resumability.
+  - **`--validate`** — hanya menjalankan validator terhadap file yang ada.
+  - Mengumpulkan kandidat kata dari: top-level key, `nama`, `kata_dasar`,
+    `bentuk_tidak_baku`, `varian`, dan `kata_turunan` di setiap entri.
+  - Filter ketat sesuai spec: hanya huruf A-Z (plus tanda hubung tunggal
+    antar segmen untuk reduplikasi seperti `ANAK-ANAK`, `MATA-MATA`).
+    Frasa (mengandung spasi), simbol, angka, dan tanda kurung dibuang.
+  - UPPERCASE semua, dedupe, sort alfabetis.
+  - Generator sample deterministik (LCG dengan seed) — rerun menghasilkan
+    sample yang sama persis.
+  - Validator skema-aware (berbeda untuk `kbbi.json` vs chunk vs sample).
+- `data/kbbi.json` — Dataset penuh (74.536 kata UPPERCASE, sorted, no
+  dupes). Versi `"2026"`, source `"KBBI V"`.
+- `data/kbbi-sample.json` — Sample 1.000 kata acak untuk dev/test
+  (sesuai spec "fallback data sample 1000 kata untuk development").
+- `data/kbbi-meta.json` — Metadata: wordCount, lengthHistogram,
+  byLetter, chunkFiles, generatedAt, minTargetMet, dll.
+- `data/kbbi-{a..z}.json` — 26 chunk per huruf awal untuk lazy loading
+  (schema `{ letter, words[] }`). Total kata di semua chunk = total kata
+  di `kbbi.json` (diverifikasi oleh test).
+- `tests/test-kbbi.js` — 231 unit test untuk dataset KBBI:
+  - Skema file utama (version, source, wordCount, words)
+  - Skema sample (ukuran persis 1.000, isi ⊆ main set)
+  - Skema 26 chunk (letter, words, semua kata berawalan huruf yg benar)
+  - Cross-check: chunk total = main wordCount (74536 = 74536)
+  - Tidak ada duplikat (di main, di setiap chunk, antar chunk)
+  - Semua kata UPPERCASE
+  - Sorted alfabetis (di main, di setiap chunk)
+  - Format kata valid (regex `^[A-Za-z]+(?:-[A-Za-z]+)*$`)
+  - Chunks mutually exclusive
+  - Sanity check 23 kata umum (ABADI, BAGUS, CINTA, DUNIA, EMAS, FANA,
+    GUNUNG, HATI, INDONESIA, JALAN, KASIH, LARI, MATA, NAMA, ORANG,
+    PINTU, RUMAH, SEHAT, TANAH, UMUR, WARNA, YANG, ZAMAN).
+- `.gitignore` — tambahkan `.cache/` (122MB raw JSON yang dapat
+  diregenerasi, tidak perlu di-commit).
+- `README.md` — update progress (Tahap 05 ✓), tambah seksi
+  "Regenerasi Dataset KBBI" dan "Menjalankan Tests".
+
+### Changed
+- `data/kbbi.json` — isi berubah dari skeleton kosong
+  (`wordCount: 0, words: []`) menjadi dataset lengkap 74.536 kata.
+- `tests/test-render.js` — fix pre-existing bug: mock DOM tidak
+  mengimplementasikan `canvas.getContext('2d')` yang dipanggil oleh
+  `updateMinimap` (Tahap 04). Tambahan `getContext` mock di
+  `mockGetElementById` dan `createElement`. Test sekarang lulus (25/25).
+
+### Notes
+- **Jumlah kata 74.536 vs target spec 100.000+**: KBBI V (sumber
+  open-source `aryakdaniswara`) berisi 112.645 entri total, namun
+  ~34% di antaranya adalah frasa/peribahasa/idiom (mengandung spasi),
+  bentuk terikat (`-an`, `-anda`), atau entri dengan simbol/tanda
+  kurung. Setelah menerapkan aturan filter spec Tahap 05 ("Hilangkan
+  entri yang bukan kata (simbol, angka, frasa dengan spasi)"), tersisa
+  74.536 kata token-tunggal yang valid untuk game. Ini adalah set
+  LENGKAP dari semua entri KBBI V yang lolos filter spec — bukan
+  subset. Target 100.000+ kemungkinan merupakan estimasi spec-author
+  yang tidak memperhitungkan bahwa banyak entri KBBI adalah frasa.
+  Metadata `data/kbbi-meta.json` mendokumentasikan hal ini secara
+  honest (`minTargetMet: false, minTarget: 100000`).
+- **Format dua-arah**: spec menyebut "ATAU format terpisah per huruf
+  awal" — proyek ini menyediakan KEDUA format (full `kbbi.json` DAN
+  26 chunk per-huruf) untuk fleksibilitas maksimum: Tahap 06 (Trie)
+  bisa memilih load full sekaligus atau lazy-load per huruf.

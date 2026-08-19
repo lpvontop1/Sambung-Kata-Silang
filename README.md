@@ -34,14 +34,19 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 ├── style.css           # Stylesheet (CSS variables, responsif)
 ├── game.js             # Logika game (modul-modul)
 ├── data/
-│   └── kbbi.json       # Data KBBI (Kamus Besar Bahasa Indonesia)
+│   ├── kbbi.json           # Data KBBI lengkap (74.536 kata, KBBI V / 2026)
+│   ├── kbbi-sample.json    # Sample 1.000 kata untuk dev/test
+│   ├── kbbi-meta.json     # Metadata & statistik dataset
+│   └── kbbi-{a..z}.json   # Chunk per-huruf untuk lazy loading
 ├── tests/
-│   ├── test-board.js   # Unit test BoardModule (88 tests)
-│   ├── test-render.js  # Unit test renderBoard (25 tests)
-│   └── test-zoom.js    # Unit test ZoomModule (50 tests)
-├── scripts/            # Skrip utilitas (scraping, dll)
-├── CHANGELOG.md        # Riwayat perubahan
-└── README.md           # Dokumentasi proyek
+│   ├── test-board.js       # Unit test BoardModule (88 tests)
+│   ├── test-render.js      # Unit test renderBoard (25 tests)
+│   ├── test-zoom.js        # Unit test ZoomModule (50 tests)
+│   └── test-kbbi.js        # Unit test dataset KBBI (231 tests)
+├── scripts/
+│   └── scrape-kbbi.js      # Skrip scraping & persiapan KBBI (rerunnable)
+├── CHANGELOG.md            # Riwayat perubahan
+└── README.md               # Dokumentasi proyek
 ```
 
 ## 🏗️ Progress Tahapan
@@ -53,7 +58,7 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 - [x] **Tahap 04** — Rendering Grid — Scroll & Zoom
 
 ### Fase 2: KBBI & Validasi Kata
-- [ ] **Tahap 05** — Sumber Data KBBI
+- [x] **Tahap 05** — Sumber Data KBBI — Scraping & Persiapan
 - [ ] **Tahap 06** — Struktur Data Trie
 - [ ] **Tahap 07** — Validasi Kata
 - [ ] **Tahap 08** — Pencarian Kata Berdasarkan Awalan
@@ -73,6 +78,31 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 1. Clone repositori ini
 2. Buka `index.html` di browser (atau gunakan live server)
 3. Tidak memerlukan build step atau dependensi tambahan
+
+### 📚 Regenerasi Dataset KBBI
+
+Dataset KBBI sudah disertakan di `data/`. Jika perlu meregenerasi (mis. untuk
+memperbarui ke versi KBBI lebih baru):
+
+```bash
+# Mode default — pakai dataset open-source (cepat, deterministik)
+node scripts/scrape-kbbi.js
+
+# Mode live — scrape langsung dari kbbi.kemdikbud.go.id (lambat, ~1 req/detik)
+node scripts/scrape-kbbi.js --mode=live
+
+# Hanya validasi file yang sudah ada
+node scripts/scrape-kbbi.js --validate
+```
+
+### 🧪 Menjalankan Tests
+
+```bash
+node tests/test-board.js   # 88 tests — BoardModule (Tahap 02)
+node tests/test-render.js  # 25 tests — renderBoard (Tahap 03)
+node tests/test-zoom.js    # 50 tests — ZoomModule (Tahap 04)
+node tests/test-kbbi.js    # 231 tests — Dataset KBBI (Tahap 05)
+```
 
 ## 📜 Lisensi
 

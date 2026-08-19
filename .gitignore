@@ -22,3 +22,6 @@ npm-debug.log*
 # Temp
 tmp/
 temp/
+
+# KBBI scraper cache (122MB raw JSON, regenerable via scripts/scrape-kbbi.js)
+.cache/
