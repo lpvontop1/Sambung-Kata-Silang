@@ -1299,13 +1299,191 @@ const SearchModule = (() => {
 // Handles word placement in all 4 directions.
 // ============================================================
 const PlacementModule = (() => {
-  // Public API (to be implemented in later tahaps)
+  /**
+   * Normalize word: trim whitespace + UPPERCASE.
+   * Non-string inputs return ''.
+   * @private
+   */
+  function _normalize(word) {
+    if (typeof word !== 'string') return '';
+    return word.trim().toUpperCase();
+  }
+
+  /**
+   * Build a failure PlacementResult.
+   * @private
+   * @param {string} reason — error code (e.g. 'not_in_kbbi')
+   * @returns {{ success: false, cells: [], word: null, reason: string }}
+   */
+  function _fail(reason) {
+    return { success: false, cells: [], word: null, reason };
+  }
+
+  /**
+   * Build a success PlacementResult.
+   * @private
+   * @param {Array<{row,col,letter}>} cells
+   * @param {object} word — Word object
+   * @param {string} reason — success code (e.g. 'placed_right')
+   */
+  function _ok(cells, word, reason) {
+    return { success: true, cells, word, reason };
+  }
+
+  /**
+   * Compute cell positions for a word in a given direction, starting at
+   * (anchorRow, anchorCol). Internal helper used by placeWordRight now
+   * (Tahap 10). The public `calculatePositions` API is reserved for
+   * Tahap 18 (handles all 4 directions in one place).
+   * @private
+   */
+  function _positionsForDirection(word, anchorRow, anchorCol, direction) {
+    const W = _normalize(word);
+    const cells = [];
+    for (let i = 0; i < W.length; i++) {
+      let row = anchorRow, col = anchorCol;
+      switch (direction) {
+        case 'right': col += i; break;
+        case 'left':  col -= i; break;
+        case 'down':  row += i; break;
+        case 'up':    row -= i; break;
+        default: return null;
+      }
+      cells.push({ row, col, letter: W[i] });
+    }
+    return cells;
+  }
+
+  /**
+   * Check if a cell at (row, col) is part of any horizontal word
+   * (direction 'right' or 'left'). Used by the gap rule: the cells
+   * immediately before/after the new word's extent must NOT be part of
+   * a horizontal word, or we'd merge two horizontal words (gap = 0).
+   *
+   * First checks `cell.partOfWords` (more accurate — survives cell
+   * direction being overwritten by later setters at intersections).
+   * Falls back to `cell.direction === 'horizontal'` if no wordId in
+   * partOfWords resolves (covers seed-anchor cases in tests where the
+   * cell was setCell'd without addWord).
+   * @private
+   */
+  function _isPartOfHorizontalWord(row, col) {
+    const cell = BoardModule.getCell(row, col);
+    if (!cell || !cell.letter) return false;
+    if (Array.isArray(cell.partOfWords) && cell.partOfWords.length > 0) {
+      for (const wid of cell.partOfWords) {
+        const w = BoardModule.getWord(wid);
+        if (w && (w.direction === 'right' || w.direction === 'left')) {
+          return true;
+        }
+      }
+    }
+    // Fallback for seed-anchor cells (no addWord called) — last-setter
+    // direction. Only treat as horizontal if cell was setCell'd with
+    // direction='horizontal' AND no partOfWords resolve to a vertical
+    // word (to avoid false positives at intersections where the latest
+    // setter was a horizontal word but the cell is also part of a vertical).
+    if (cell.direction === 'horizontal' && cell.partOfWords.length === 0) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * placeWordRight(word, anchorRow, anchorCol, wordId, playerId) — Tahap 10
+   *
+   * Place `word` extending to the RIGHT of the anchor cell at
+   * (anchorRow, anchorCol). The anchor cell must already be filled
+   * with a letter, and the word's FIRST letter must equal that letter.
+   * Only letters 2..N go into new cells; the anchor cell retains its
+   * letter (becomes an intersection point).
+   *
+   * Validations (per Tahap 10 spec):
+   *   1. Word is a valid KBBI word
+   *   2. Word hasn't been played before (no repeat)
+   *   3. First letter of word === anchor cell's letter
+   *   4. No overlap conflict (each filled cell in path must have same letter)
+   *   5. Gap rule: no adjacent horizontal word touching (cells immediately
+   *      before & after the new word's extent must NOT be part of a
+   *      horizontal word — except at intersection cells which are allowed)
+   *
+   * @param {string} word
+   * @param {number} anchorRow
+   * @param {number} anchorCol
+   * @param {string|null} [wordId] — caller-provided ID (else auto-UUID)
+   * @param {string} [playerId]
+   * @returns {{ success: boolean, cells: Array<{row,col,letter}>, word: object|null, reason: string }}
+   *   On failure: { success: false, cells: [], word: null, reason }
+   *   On success: { success: true, cells: [...all N positions...], word: Word, reason: 'placed_right' }
+   */
+  function placeWordRight(word, anchorRow, anchorCol, wordId, playerId) {
+    // 1. Normalize & non-empty
+    const W = _normalize(word);
+    if (!W) return _fail('empty_word');
+
+    // 2. KBBI must be loaded
+    if (!KBBIModule.isLoaded()) return _fail('kbbi_not_loaded');
+
+    // 3. Valid KBBI word
+    if (!KBBIModule.search(W)) return _fail('not_in_kbbi');
+
+    // 4. No-repeat (spec: "Kata belum pernah dimainkan")
+    if (BoardModule.hasWord(W)) return _fail('word_already_used');
+
+    // 5. Anchor cell must exist with a letter
+    const anchor = BoardModule.getCell(anchorRow, anchorCol);
+    if (!anchor || !anchor.letter) return _fail('no_anchor');
+
+    // 6. First letter must equal anchor letter
+    if (W[0] !== anchor.letter) return _fail('first_letter_mismatch');
+
+    // 7. Compute positions for 'right' direction
+    const cells = _positionsForDirection(W, anchorRow, anchorCol, 'right');
+    if (!cells) return _fail('invalid_direction'); // shouldn't happen for 'right'
+
+    // 8. Overlap conflict — each filled cell in path must have same letter
+    for (const c of cells) {
+      const existing = BoardModule.getCell(c.row, c.col);
+      if (existing && existing.letter && existing.letter !== c.letter) {
+        return _fail('overlap_conflict');
+      }
+    }
+
+    // 9. Gap rule — cell immediately before the start and immediately
+    //    after the end must NOT be part of a horizontal word (else
+    //    our new word would merge with an adjacent horizontal word,
+    //    creating an invalid concatenated word).
+    const beforeCell = BoardModule.getCell(anchorRow, anchorCol - 1);
+    if (beforeCell && beforeCell.letter &&
+        _isPartOfHorizontalWord(anchorRow, anchorCol - 1)) {
+      return _fail('adjacent_word_before');
+    }
+    const afterCol = anchorCol + W.length;
+    const afterCell = BoardModule.getCell(anchorRow, afterCol);
+    if (afterCell && afterCell.letter &&
+        _isPartOfHorizontalWord(anchorRow, afterCol)) {
+      return _fail('adjacent_word_after');
+    }
+
+    // 10. All validations passed — create the Word object and place cells
+    const wordObj = BoardModule.createWord(W, anchorRow, anchorCol, 'right',
+                                            playerId, wordId);
+    for (const c of cells) {
+      BoardModule.setCell(c.row, c.col, c.letter, wordObj.id, 'horizontal');
+    }
+    BoardModule.addWord(wordObj);
+
+    return _ok(cells, wordObj, 'placed_right');
+  }
+
+  // Public API
   return {
-    placeWordRight: (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 10 */ },
+    placeWordRight,
+    // Stubs preserved for later tahaps
     placeWordLeft:  (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 11 */ },
     placeWordDown:  (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 12 */ },
     placeWordUp:    (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 13 */ },
-    calculatePositions: (word, anchorRow, anchorCol, direction) => { /* Tahap 18 */ }
+    calculatePositions: (word, anchorRow, anchorCol, direction) => { /* Tahap 18 */ },
   };
 })();
 

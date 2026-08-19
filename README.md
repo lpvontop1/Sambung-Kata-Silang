@@ -39,14 +39,15 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 │   ├── kbbi-meta.json     # Metadata & statistik dataset
 │   └── kbbi-{a..z}.json   # Chunk per-huruf untuk lazy loading
 ├── tests/
-│   ├── test-board.js         # Unit test BoardModule (88 tests)
-│   ├── test-render.js        # Unit test renderBoard (25 tests)
-│   ├── test-zoom.js          # Unit test ZoomModule (50 tests)
-│   ├── test-kbbi.js          # Unit test dataset KBBI (231 tests)
-│   ├── test-trie.js          # Unit test KBBITrie & KBBIModule (146 tests)
-│   ├── test-validation.js    # Unit test ValidationModule (207 tests)
+│   ├── test-board.js          # Unit test BoardModule (88 tests)
+│   ├── test-render.js         # Unit test renderBoard (25 tests)
+│   ├── test-zoom.js           # Unit test ZoomModule (50 tests)
+│   ├── test-kbbi.js           # Unit test dataset KBBI (231 tests)
+│   ├── test-trie.js           # Unit test KBBITrie & KBBIModule (146 tests)
+│   ├── test-validation.js     # Unit test ValidationModule (207 tests)
 │   ├── test-prefix-search.js  # Unit test SearchModule prefix (89 tests)
-│   └── test-suffix-search.js  # Unit test SearchModule suffix (81 tests)
+│   ├── test-suffix-search.js  # Unit test SearchModule suffix (81 tests)
+│   └── test-placement-right.js # Unit test PlacementModule.placeWordRight (91 tests)
 ├── scripts/
 │   └── scrape-kbbi.js      # Skrip scraping & persiapan KBBI (rerunnable)
 ├── CHANGELOG.md            # Riwayat perubahan
@@ -68,7 +69,16 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 - [x] **Tahap 08** — Pencarian Kata Berdasarkan Awalan
 - [x] **Tahap 09** — Pencarian Kata Berdasarkan Akhiran
 
-### Fase 3–10: *(待実装 — upcoming tahaps)*
+### Fase 3: Mekanik Penempatan Kata
+- [x] **Tahap 10** — Mekanik Penempatan — Horizontal Kanan
+- [ ] **Tahap 11** — Mekanik Penempatan — Horizontal Kiri
+- [ ] **Tahap 12** — Mekanik Penempatan — Vertikal Bawah
+- [ ] **Tahap 13** — Mekanik Penempatan — Vertikal Atas
+- [ ] **Tahap 14** — Deteksi & Validasi Persilangan (Intersection)
+- [ ] **Tahap 15** — Deteksi & Validasi Cabang Baru (Branch)
+- [ ] **Tahap 16** — Validasi Overlap & Konflik Penempatan
+- [ ] **Tahap 17** — Sistem Daftar Kata Sudah Dipakai (No Repeat)
+- [ ] **Tahap 18** — Kalkulasi Posisi & Anchoring
 
 ## 🛠️ Teknologi
 
@@ -110,6 +120,7 @@ node tests/test-trie.js          # 146 tests — KBBITrie & KBBIModule (Tahap 06
 node tests/test-validation.js   # 207 tests — ValidationModule (Tahap 07)
 node tests/test-prefix-search.js # 89 tests — SearchModule prefix search (Tahap 08)
 node tests/test-suffix-search.js  # 81 tests — SearchModule suffix search (Tahap 09)
+node tests/test-placement-right.js # 91 tests — PlacementModule.placeWordRight (Tahap 10)
 ```
 
 ## 📜 Lisensi

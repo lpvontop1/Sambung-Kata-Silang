@@ -661,3 +661,151 @@ With Tahap 09, Fase 2 (KBBI & Validasi Kata) is complete:
 - Tahap 08: Prefix search (findWordsByPrefix + 3 helpers + autocomplete UI)
 - Tahap 09: Suffix search (findWordsBySuffix + 3 helpers + direction-aware UI)
 Next up: Fase 3 — Mekanik Penempatan Kata (Tahap 10–18).
+
+## [1.0.0] — Tahap 10: Mekanik Penempatan — Horizontal Kanan
+
+### Added
+- `game.js` — **PlacementModule.placeWordRight** fully implemented:
+  - Signature: `placeWordRight(word, anchorRow, anchorCol, wordId, playerId)`
+  - Returns `PlacementResult`: `{ success, cells, word, reason }`
+    - On success: `{ success: true, cells: [...N positions...], word: Word,
+      reason: 'placed_right' }`
+    - On failure: `{ success: false, cells: [], word: null, reason: '<code>' }`
+  - Spec example verified: anchor "A" at (5,3), word "ANJING" →
+    cells (5,3)=A, (5,4)=N, (5,5)=J, (5,6)=I, (5,7)=N, (5,8)=G
+
+  Validations (per Tahap 10 spec, in order):
+  1. `empty_word` — non-empty normalized word (after trim+UPPERCASE)
+  2. `kbbi_not_loaded` — KBBIModule.isLoaded() check
+  3. `not_in_kbbi` — KBBIModule.search(W) fails
+  4. `word_already_used` — BoardModule.hasWord(W) (no-repeat check via
+     wordSet, per Tahap 17 spec but implemented now using BoardModule
+     wordSet directly)
+  5. `no_anchor` — anchor cell at (anchorRow, anchorCol) doesn't exist
+     or has no letter
+  6. `first_letter_mismatch` — W[0] !== anchor.letter
+  7. `overlap_conflict` — any filled cell in path has different letter
+     (intersection with same letter is OK)
+  8. `adjacent_word_before` — cell before anchor is part of a horizontal
+     word (gap rule; would extend/merge with existing horizontal word)
+  9. `adjacent_word_after` — cell after last letter is part of a
+     horizontal word (same gap rule)
+  10. All passed → create Word via BoardModule.createWord + setCell for
+      each position + BoardModule.addWord → return success result
+
+- `game.js` — **Private helpers in PlacementModule**:
+  - `_normalize(word)` — trim+UPPERCASE; non-string → ''
+  - `_fail(reason)` — build failure result `{success:false, cells:[],
+    word:null, reason}`
+  - `_ok(cells, word, reason)` — build success result
+  - `_positionsForDirection(word, anchorRow, anchorCol, direction)` —
+    compute cell positions for any direction ('right'|'left'|'down'|'up').
+    Internal helper used by placeWordRight now; will be exposed publicly
+    as `calculatePositions` in Tahap 18 (handles all 4 directions).
+  - `_isPartOfHorizontalWord(row, col)` — checks if a cell is part of
+    any horizontal word ('right' or 'left'). First checks `partOfWords`
+    for accurate intersection-aware lookup; falls back to
+    `cell.direction === 'horizontal'` for seed-anchor cells (no
+    addWord called). Used by gap rule (cells before/after the new word's
+    extent must NOT be part of a horizontal word, except intersections).
+
+- `tests/test-placement-right.js` — **91 unit tests** covering:
+  1. PlacementModule API surface (placeWordRight + 3 direction stubs +
+     calculatePositions stub)
+  2. Successful placement (anchor A from vertical seed → ANJING right)
+  3. Result shape: { success, cells, word, reason } — all fields verified
+  4. Word actually written to board (cells filled via BoardModule.setCell,
+     word added via BoardModule.addWord, intersection cell has partOfWords
+     containing both vertical seed wordId and new word id)
+  5. First-letter mismatch (anchor A, word BERLARI starts with B → fails)
+  6. Word not in KBBI (XYZQQ → not_in_kbbi)
+  7. Word already used (place ANJING twice → word_already_used)
+  8. Anchor cell empty (place at (100,100) → no_anchor for fresh KBBI word)
+  9. KBBI not loaded (after KBBIModule.reset → kbbi_not_loaded)
+  10. Empty word ('' → empty_word)
+  11. Non-string word (null/undefined/number → empty_word)
+  12. Overlap conflict (plant 'X' at (5,4) → AROMA placement fails with
+      overlap_conflict; ASIA fallback if AROMA not in KBBI)
+  13. Overlap OK (intersection with same letter — vertical "BAHAYA" at
+      (6,6) crosses horizontal "ABADI" at (6,6)=B; intersection cell's
+      partOfWords contains both seed-bahaya and the new word id)
+  14. Gap rule before (horizontal "KATA" at (5,1-5,4) ends right before
+      anchor at (5,5); place ANJING right → adjacent_word_before)
+  15. Gap rule after (horizontal "KATA" starts right after where AJAIB
+      would end → adjacent_word_after)
+  16. Gap rule NOT triggered when before cell is part of VERTICAL word
+      only (vertical "BAHAYA" at (5,4); place ANJING right from (5,5)
+      succeeds because (5,4)=B is vertical, not horizontal)
+  17. Multiple successful placements building up a board (seed ABADI
+      vertical + ANJING right from (10,10)=A + BAGUS right from (11,10)=B
+      + IKAN right from (14,10)=I → 4 words on board). Also verifies
+      that placing from the END of a horizontal word fails correctly
+      (gap rule fires — GUNUNG from (10,15)=G fails because (10,14)=N
+      is part of horizontal ANJING).
+  18. Case-insensitivity (lowercase/mixed/whitespace-padded input all
+      normalize to UPPERCASE)
+  19. Hyphenated word placement (ANAK-ANAK right from anchor A — 9 cells
+      including hyphen at position 4)
+  20. Spec example (anchor A → ANJING → cells (5,3)=A, (5,4)=N, etc.)
+  21. wordId & playerId pass-through (caller-provided IDs reach Word
+      object; BoardModule.getWord(customId) returns the word)
+  22. Spec validation order (invalid KBBI on empty cell → not_in_kbbi,
+      NOT no_anchor; already-used on empty cell → word_already_used,
+      NOT no_anchor; fresh KBBI on empty cell → no_anchor)
+
+### Spec interpretation notes
+- **Anchor letter vs first-letter check**: spec example shows anchor
+  "A" + word "ANJING" → A(5,3) is the anchor (existing cell from any
+  word) and word's first letter must match anchor's letter. So anchor
+  is any filled cell, and the new word's first letter hooks into it.
+- **Anchor at end of horizontal word**: if the anchor cell IS the last
+  letter of an existing horizontal word (e.g. G from ANJING at (10,15)),
+  placing a new horizontal word right from there would extend that
+  horizontal word — gap rule rejects this (cells before anchor (10,14)=N
+  is part of horizontal ANJING → adjacent_word_before). Correct behavior.
+- **Intersection (same letter overlap) is allowed**: spec point 4 says
+  "Tidak ada konflik overlap (cell yang sudah terisi harus punya huruf
+  yang sama)". So overlap with SAME letter is OK (intersection); only
+  DIFFERENT letter is conflict.
+- **Gap rule excludes intersections**: spec point 5 says "kecuali
+  persilangan". So a cell at the start/end of our new word that's part
+  of a vertical word is OK (it's just a crossing point). Only horizontal
+  words trigger the gap rule.
+- **No-repeat check (point 2)**: spec defers `isWordUsed` to Tahap 17,
+  but BoardModule.wordSet is already maintained. The check is done
+  inline using `BoardModule.hasWord(W)` — when Tahap 17 lands,
+  ValidationModule.isWordUsed will likely wrap this same call.
+
+### Cross-check & bugs found and fixed during this tahap
+1. **Test bug**: `assertEqual` on cell objects fails because `===`
+   compares object references, not content. Cells are different
+   object instances even with identical content. Fixed by using
+   `assertDeepEqual` (JSON.stringify comparison) for cell assertions
+   in section 20.
+2. **Test bug**: Test 12 used 'CINTA' as both seed AND placement word,
+   triggering word_already_used before overlap_conflict. Fixed by
+   using different words: seed vertical 'ABADI', plant isolated 'X'
+   at (5,4), place 'AROMA' (or 'ASIA' fallback) — anchor A from
+   ABADI, position 2 would be R or S, but cell has 'X' → overlap_conflict.
+3. **Test bug**: Test 17 expected GUNUNG placement from (10,15)=G to
+   succeed, but (10,15) is the last letter of horizontal ANJING, so
+   cell (10,14)=N is part of horizontal ANJING → gap rule correctly
+   fires. Rewrote test to use different anchor cells from the vertical
+   seed (B at (11,10), I at (14,10)) so placements succeed without
+   gap-rule conflicts. Added explicit assertion that GUNUNG from
+   (10,15) FAILS with adjacent_word_before (correct behavior).
+
+### Files
+- `game.js` — +PlacementModule full impl (~190 lines added; was 10-line
+  stub), within the existing module structure
+- `tests/test-placement-right.js` — +575 lines (91 tests, comprehensive
+  coverage including all 9 failure reason codes + 13 positive scenarios)
+- `README.md` — Tahap 10 progress checkbox + new "Fase 3" section header
+  + test inventory entry
+- `CHANGELOG.md` — this entry
+
+### Fase 3 begins
+Tahap 10 is the first of 9 tahaps (10-18) in Fase 3 — Mekanik Penempatan
+Kata. Next up: Tahap 11 (placeWordLeft — symmetric to right but going
+LEFT; uses suffix matching since new word's LAST letter must equal
+anchor letter).
