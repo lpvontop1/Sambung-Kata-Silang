@@ -875,14 +875,195 @@ const KBBIModule = (() => {
 // Validates words against KBBI, checks placement constraints.
 // ============================================================
 const ValidationModule = (() => {
-  // Public API (to be implemented in later tahaps)
+  /**
+   * Normalize input word: trim whitespace + uppercase.
+   * Non-string inputs return ''.
+   * @private
+   */
+  function _normalize(word) {
+    if (typeof word !== 'string') return '';
+    return word.trim().toUpperCase();
+  }
+
+  /**
+   * isValidWord(word) — boolean.
+   *
+   * Flow (per Tahap 07 spec):
+   *   1. Normalize: trim whitespace + UPPERCASE
+   *   2. Empty → false
+   *   3. Length-1 words: valid only if they exist in KBBI
+   *   4. Length ≥ 2: lookup KBBITrie.search(normalized)
+   *
+   * @param {string} word
+   * @returns {boolean}
+   */
+  function isValidWord(word) {
+    return validateWordWithDetail(word).valid;
+  }
+
+  /**
+   * validateWordWithDetail(word) — returns detailed validation result.
+   *
+   * @param {string} word
+   * @returns {{ valid: boolean, reason: string, normalized: string }}
+   *   reason values:
+   *     "valid"        — word is in KBBI
+   *     "empty"        — input is empty / whitespace-only / non-string
+   *     "too_short"    — length 1 and not in KBBI (single-char that isn't a KBBI lemma)
+   *     "not_in_kbbi"  — length ≥ 2 but not found in KBBI
+   */
+  function validateWordWithDetail(word) {
+    const normalized = _normalize(word);
+    if (!normalized) {
+      return { valid: false, reason: 'empty', normalized: '' };
+    }
+    if (!KBBIModule.isLoaded()) {
+      // KBBI hasn't been loaded yet — can't validate against the dictionary.
+      // Treat as not_in_kbbi (safer than valid). UI should warn user to load KBBI first.
+      return { valid: false, reason: 'not_in_kbbi', normalized };
+    }
+    // Length-1 words are valid ONLY if they exist in KBBI
+    if (normalized.length < 2) {
+      if (KBBIModule.search(normalized)) {
+        return { valid: true, reason: 'valid', normalized };
+      }
+      return { valid: false, reason: 'too_short', normalized };
+    }
+    // Length >= 2: lookup KBBI
+    if (KBBIModule.search(normalized)) {
+      return { valid: true, reason: 'valid', normalized };
+    }
+    return { valid: false, reason: 'not_in_kbbi', normalized };
+  }
+
+  /**
+   * isTypo(word, maxDistance=1) — boolean (advanced, per Tahap 07 spec).
+   *
+   * Checks if `word` is "close" to any KBBI word (edit distance ≤ maxDistance).
+   * Returns true if there's a KBBI word within the distance (indicating a
+   * likely typo rather than a random string).
+   *
+   * Algorithm: BFS over edit-distance-1 variants (deletions + insertions +
+   * substitutions of A-Z). For each variant, do a fast KBBITrie.search lookup.
+   * Default maxDistance=1 for speed; maxDistance=2 supported but slower.
+   *
+   * @param {string} word
+   * @param {number} [maxDistance=1] — 1 or 2 (capped at 2 for performance)
+   * @returns {boolean} true if a nearby KBBI word exists (excluding exact match)
+   */
+  function isTypo(word, maxDistance = 1) {
+    const normalized = _normalize(word);
+    if (!normalized) return false;
+    if (!KBBIModule.isLoaded()) return false;
+    // Exact match → not a typo
+    if (KBBIModule.search(normalized)) return false;
+    if (maxDistance < 1) return false;
+    if (maxDistance > 2) maxDistance = 2;
+
+    // BFS over edit-distance-1 variants
+    const seen = new Set([normalized]);
+    let frontier = [normalized];
+    const VARIANT_LIMIT = 60000; // safety valve for distance 2 on long words
+    let explored = 0;
+
+    for (let d = 0; d < maxDistance; d++) {
+      const next = [];
+      for (const w of frontier) {
+        for (const v of _editDistance1Variants(w)) {
+          if (seen.has(v)) continue;
+          seen.add(v);
+          explored++;
+          if (KBBIModule.search(v)) return true;
+          next.push(v);
+          if (explored > VARIANT_LIMIT) return false;
+        }
+      }
+      frontier = next;
+    }
+    return false;
+  }
+
+  /**
+   * Generator: all edit-distance-1 variants of `word`.
+   * - Deletions:        L variants
+   * - Insertions (A-Z): (L+1) * 26 variants
+   * - Substitutions:    L * 25 variants (skip same char)
+   * Total: ~52L + 26 variants per word.
+   * @private
+   */
+  function* _editDistance1Variants(word) {
+    const L = word.length;
+    // Deletions
+    for (let i = 0; i < L; i++) {
+      yield word.slice(0, i) + word.slice(i + 1);
+    }
+    // Insertions
+    for (let i = 0; i <= L; i++) {
+      for (let c = 65; c <= 90; c++) {
+        const ch = String.fromCharCode(c);
+        yield word.slice(0, i) + ch + word.slice(i);
+      }
+    }
+    // Substitutions
+    for (let i = 0; i < L; i++) {
+      for (let c = 65; c <= 90; c++) {
+        const ch = String.fromCharCode(c);
+        if (ch !== word[i]) {
+          yield word.slice(0, i) + ch + word.slice(i + 1);
+        }
+      }
+    }
+  }
+
+  /**
+   * Levenshtein distance between two strings.
+   * Classic DP: O(m*n) time, O(m*n) space.
+   * Exposed for tests and external use.
+   *
+   * @param {string} a
+   * @param {string} b
+   * @returns {number}
+   */
+  function levenshtein(a, b) {
+    if (a === b) return 0;
+    if (!a) return (b || '').length;
+    if (!b) return (a || '').length;
+    if (typeof a !== 'string') a = String(a);
+    if (typeof b !== 'string') b = String(b);
+    const m = a.length, n = b.length;
+    // 1D DP for memory efficiency
+    let prev = new Array(n + 1);
+    let curr = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+      curr[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        curr[j] = Math.min(
+          prev[j] + 1,        // deletion
+          curr[j - 1] + 1,    // insertion
+          prev[j - 1] + cost // substitution
+        );
+      }
+      [prev, curr] = [curr, prev]; // swap rows
+    }
+    return prev[n];
+  }
+
+  // Public API
   return {
-    isValidWord:            (word) => { /* Tahap 07 */ },
-    validateWordWithDetail: (word) => { /* Tahap 07 */ },
-    validatePlacement:      (cells, board) => { /* Tahap 16 */ },
-    validateNoAdjacentConflict: (cells, board, direction) => { /* Tahap 16 */ },
-    validateAccidentalWords:    (cells, board, direction) => { /* Tahap 16 */ },
-    isWordUsed:             (word) => { /* Tahap 17 */ }
+    isValidWord,
+    validateWordWithDetail,
+    isTypo,
+    levenshtein,
+    // Internal helpers exposed for testing
+    _normalize,
+    _editDistance1Variants,
+    // Stubs preserved for later tahaps
+    validatePlacement:           (cells, board) => { /* Tahap 16 */ },
+    validateNoAdjacentConflict:  (cells, board, direction) => { /* Tahap 16 */ },
+    validateAccidentalWords:     (cells, board, direction) => { /* Tahap 16 */ },
+    isWordUsed:                  (word) => { /* Tahap 17 */ },
   };
 })();
 
@@ -2236,13 +2417,43 @@ const GameController = (() => {
   function submitWord() {
     const input = document.getElementById('word-input');
     if (!input) return;
-    const word = input.value.trim().toUpperCase();
-    if (!word) return;
-
-    // Stub: will be implemented in later tahaps
-    console.log(`[Game] Word submitted: "${word}"`);
-    UIModule.showToast(`Kata "${word}" dikirim (belum divalidasi)`, 'info');
+    const rawWord = input.value;
+    const result = ValidationModule.validateWordWithDetail(rawWord);
     input.value = '';
+
+    if (result.valid) {
+      // Spec Tahap 07: "Jika valid → lanjut ke penempatan"
+      // Penempatan (arah/anchor) akan diimplementasi di Tahap 10–18.
+      UIModule.showToast(`Kata "${result.normalized}" valid ✓ — pilih posisi penempatan (Tahap 10+)`, 'success', 2500);
+      console.log(`[Game] Word "${result.normalized}" valid (reason: ${result.reason})`);
+      // TODO (Tahap 10+): pass `result.normalized` to PlacementModule
+      return;
+    }
+
+    // Spec Tahap 07: "Jika tidak valid → tampilkan pesan error, nyawa berkurang, skor -10"
+    // Nyawa & skor modul diimplementasi di Tahap 19+ & 23+; untuk sekarang
+    // tampilkan toast + log placeholder untuk integrasi nanti.
+    const map = {
+      empty:       { msg: 'Masukkan kata terlebih dahulu',                          type: 'info',    },
+      too_short:   { msg: `Kata "${result.normalized}" terlalu pendek (min. 2 huruf, kecuali kata 1 huruf yang terdaftar di KBBI)`, type: 'warning' },
+      not_in_kbbi: { msg: `Kata "${result.normalized}" tidak ditemukan di KBBI`,      type: 'error',  },
+    };
+    const info = map[result.reason] || map.not_in_kbbi;
+
+    // Cek apakah kata mirip dengan kata KBBI (typo) — sarankan jika ya
+    let hint = '';
+    if (result.reason === 'not_in_kbbi' && ValidationModule.isTypo(result.normalized, 1)) {
+      hint = ' (mungkin typo? periksa ejaan)';
+    }
+
+    UIModule.showToast(info.msg + hint, info.type, 3000);
+    console.log(`[Game] Word "${result.normalized}" rejected — reason: ${result.reason}${hint}`);
+
+    // TODO (Tahap 19+ & 23+): kurangi nyawa pemain & skor -10
+    // Untuk saat ini, hanya log agar alur lengkap saat modul siap.
+    if (result.reason === 'too_short' || result.reason === 'not_in_kbbi') {
+      console.log('[Game] (placeholder) nyawa -1, skor -10 — akan diwiring di Tahap 19/23');
+    }
   }
 
   // --- THEME ---

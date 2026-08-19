@@ -332,3 +332,107 @@
 - `tests/test-trie.js` — +540 lines (146 tests)
 - `README.md` — Tahap 06 progress checkbox + test inventory
 - `CHANGELOG.md` — this entry
+
+## [0.7.0] — Tahap 07: Validasi Kata — Lookup KBBI
+
+### Added
+- `game.js` — **ValidationModule** fully implemented:
+  - `isValidWord(word)` — boolean. Normalizes input (trim + uppercase),
+    then delegates to `validateWordWithDetail(word).valid`. Spec examples
+    all pass: `SELASA`→true, `HALO`→true, `XYZQQ`→false.
+  - `validateWordWithDetail(word)` — returns `{ valid, reason, normalized }`
+    with reason ∈ {`"valid"`, `"empty"`, `"too_short"`, `"not_in_kbbi"`}:
+    - `empty`: input is empty/whitespace-only/non-string → `normalized=""`
+    - `too_short`: length 1 and not in KBBI (single non-letter char)
+    - `not_in_kbbi`: length ≥ 2 but not found in KBBI trie, OR KBBI not
+      loaded yet (safe-fail behavior)
+    - `valid`: word is in KBBI (length 1 only if KBBI has it; length ≥ 2
+      standard lookup)
+  - `isTypo(word, maxDistance=1)` — advanced typo detection via BFS over
+    edit-distance-1 variants. Generates deletions + insertions (A-Z) +
+    substitutions (A-Z); each variant checked via fast `KBBITrie.search`.
+    - Default maxDistance=1 for speed (sub-millisecond for typical words)
+    - maxDistance=2 supported via BFS frontier expansion (capped by
+      `VARIANT_LIMIT = 60000` safety valve for very long words)
+    - maxDistance capped at 2 (no higher distances allowed)
+    - Returns `false` for exact KBBI matches (a typo is not a typo if
+      the word IS in KBBI)
+    - Returns `false` if KBBI not loaded, or input is empty/non-string
+  - `levenshtein(a, b)` — classic DP edit distance. 1D-row space-
+    optimized (O(m*n) time, O(n) space). Exposed for tests and external use.
+  - `_normalize(word)` — private helper (trim + uppercase; non-string → '')
+  - `_editDistance1Variants(word)` — JS generator yielding all single-
+    edit variants (deletions + insertions + substitutions)
+- `game.js` — **GameController.submitWord()** wired to ValidationModule:
+  - Calls `ValidationModule.validateWordWithDetail(rawWord)` on every submit
+  - On `valid`: success toast `Kata "X" valid ✓ — pilih posisi penempatan
+    (Tahap 10+)`, defers actual placement to Tahap 10+
+  - On `empty`/`too_short`/`not_in_kbbi`: appropriate toast (`info`/`
+    `warning`/`error`)
+  - On `not_in_kbbi`: also calls `isTypo(word, 1)` and appends hint
+    ` (mungkin typo? periksa ejaan)` if a nearby KBBI word exists
+  - Placeholder `console.log` for life `-1` & score `-10` (per spec) —
+    actual lives/score wiring deferred to Tahap 19 & 23 when those
+    modules exist
+- `tests/test-validation.js` — **207 unit tests** covering:
+  1. API surface (isValidWord, validateWordWithDetail, isTypo, levenshtein
+     all functions; _normalize, _editDistance1Variants exposed for tests;
+     stubs for Tahap 16/17 preserved)
+  2. isValidWord — spec examples: SELASA true, HALO true, XYZQQ false
+  3. validateWordWithDetail — all 4 reason values verified with 4+ cases
+     each (valid, empty/whitespace/null/undefined/number, too_short for
+     single non-letter char, not_in_kbbi for random strings)
+  4. Case-insensitivity & whitespace trimming (lowercase, mixed case,
+     leading/trailing whitespace, tab/newline, mixed-case hyphen)
+  5. Hyphenated reduplications (ANAK-ANAK, MATA-MATA, KUDA-KUDA, LARI-LARI)
+  6. Single-letter words (all 26 letters A-Z verified to be in KBBI;
+     plus lowercase single letters)
+  7. Edge cases (empty string, whitespace-only, null, undefined, number,
+     object, array, boolean, very long string, word with digits)
+  8. Behavior when KBBI not loaded (returns `not_in_kbbi` for any input;
+     isTypo returns false; after reload, behavior restored)
+  9. Levenshtein distance (empty strings, identical, 1-edit each direction,
+     full substitution, transposition, case-sensitivity)
+  10. `_editDistance1Variants` generator (variant count for length-0/1/2
+      words: 26, 78, 130 — formula 52L+26 verified; specific variant
+      content checked)
+  11. isTypo distance 1: exact match→false, 1-char deletion from KBBI
+      word→true (SELAS from SELASA), 1-char insertion→true (HALLO from
+      HALO), 1-char substitution→true (ABADO from ABADI)
+  12. isTypo distance 2: `XXLASA` (2 substitutions from SELASA) — no KBBI
+      word within distance 1, but found at distance 2; `SESA` correctly
+      detected at distance 1 (near DESA/LESA/SELA/etc.); maxDistance>2
+      capped to 2 without crashing
+  13. isTypo — exact KBBI matches all return false (SELASA, HALO, ABADI,
+      INDONESIA, ANAK-ANAK, KUCING)
+  14. isTypo — random garbage (XYZQQ, QQQQQ, ASDFGHJKL, ZZZZZZZZZZ) all
+      return false
+  15. Performance: isTypo distance 1 < 1 sec, distance 2 < 5 sec
+  16. Spec sanity: SELASA valid, XYZQQ invalid, HALO valid, plus 22
+      additional common KBBI words (BAGUS, CINTA, DUNIA, ..., ZAMAN) all
+      valid; QQQQQ and ASDFGHJKL invalid
+
+### Behavior decisions
+- **`too_short` vs `not_in_kbbi` for length-1 input**: spec says "kata 1
+  huruf tidak valid kecuali yang ada di KBBI". Implemented as: length-1
+  input → check KBBI; if found, valid; else `too_short`. Since all 26
+  single letters (A-Z) ARE in our KBBI V dataset, `too_short` is rare in
+  practice — only triggers for non-letter single chars like `"1"`, `"!"`.
+- **KBBI not loaded → `not_in_kbbi`**: when `KBBIModule.isLoaded()` is
+  false, any non-empty word gets reason `not_in_kbbi` (rather than a
+  separate "not_loaded" reason — keeps the reason enum clean per spec).
+- **`isTypo` default maxDistance=1**: spec says "edit distance 1-2" but
+  distance 2 is much slower (~80k trie lookups per call for typical
+  words). Default is 1 for production use; callers who want distance 2
+  pass it explicitly. Both work and both are tested.
+- **GameController.submitWord UI integration**: spec asks for "nyawa
+  berkurang, skor -10" on invalid word. Lives module (Tahap 19+) and
+  Scoring module (Tahap 23+) don't exist yet. For Tahap 07, the wiring
+  ends at the toast + a `console.log` placeholder; the actual deduction
+  will be re-wired in those tahaps.
+
+### Files
+- `game.js` — +200 lines ValidationModule + ~30 lines GameController.submitWord
+- `tests/test-validation.js` — +440 lines (207 tests)
+- `README.md` — Tahap 07 progress checkbox + test inventory
+- `CHANGELOG.md` — this entry
