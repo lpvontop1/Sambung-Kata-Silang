@@ -862,9 +862,12 @@ const KBBIModule = (() => {
       return t.size() - beforeSize;
     },
 
-    // Tahap 08 akan wire ini ke trie.getWordsByPrefix
-    getWordsByPrefix: (prefix, limit) => { /* Tahap 08 */ },
-    // Tahap 09 akan wire ini ke trie.getWordsBySuffix
+    // Tahap 08 — wired: delegate to KBBITrie.getWordsByPrefix
+    getWordsByPrefix: (prefix, limit) => {
+      if (!loaded || !trie) return [];
+      return trie.getWordsByPrefix(prefix, limit);
+    },
+    // Tahap 09 — stub still (Tahap 08 only wires prefix side)
     getWordsBySuffix: (suffix, limit) => { /* Tahap 09 */ },
   };
 })();
@@ -1064,6 +1067,135 @@ const ValidationModule = (() => {
     validateNoAdjacentConflict:  (cells, board, direction) => { /* Tahap 16 */ },
     validateAccidentalWords:     (cells, board, direction) => { /* Tahap 16 */ },
     isWordUsed:                  (word) => { /* Tahap 17 */ },
+  };
+})();
+
+
+// ============================================================
+// --- SEARCH MODULE (Tahap 08) ---
+// Higher-level prefix search helpers (autocomplete, valid candidates,
+// random picks, hints). Delegates to KBBIModule.getWordsByPrefix,
+// which in turn calls KBBITrie.getWordsByPrefix.
+// ============================================================
+const SearchModule = (() => {
+  /**
+   * Normalize prefix: trim + UPPERCASE.
+   * @private
+   */
+  function _normalize(prefix) {
+    if (typeof prefix !== 'string') return '';
+    return prefix.trim().toUpperCase();
+  }
+
+  /**
+   * Seeded LCG (deterministic) so getRandomWordByPrefix returns
+   * reproducible picks in tests.
+   * @private
+   */
+  function _seededRng(seedStr) {
+    let seed = 0x811c9dc5;
+    for (let i = 0; i < seedStr.length; i++) {
+      seed ^= seedStr.charCodeAt(i);
+      seed = Math.imul(seed, 0x01000193) >>> 0;
+    }
+    return () => {
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17;
+      seed ^= seed << 5;  seed >>>= 0;
+      return seed / 0x100000000;
+    };
+  }
+
+  /**
+   * findWordsByPrefix(prefix, limit=20) — string[]
+   * Returns up to `limit` KBBI words starting with `prefix`.
+   * Spec: "Panggil KBBITrie.getWordsByPrefix(prefix, limit)".
+   *
+   * @param {string} prefix
+   * @param {number} [limit=20]
+   * @returns {string[]} — sorted alphabetically (per Trie DFS order)
+   */
+  function findWordsByPrefix(prefix, limit = 20) {
+    const p = _normalize(prefix);
+    if (!p) return [];
+    if (!KBBIModule.isLoaded()) return [];
+    return KBBIModule.getWordsByPrefix(p, limit);
+  }
+
+  /**
+   * findValidWordsByPrefix(prefix, usedWords, limit=20) — string[]
+   * Like findWordsByPrefix but excludes any word already in `usedWords`.
+   *
+   * @param {string} prefix
+   * @param {Set<string>|string[]} usedWords — words already played (UPPERCASE)
+   * @param {number} [limit=20]
+   * @returns {string[]} — valid (not-yet-used) candidate words
+   */
+  function findValidWordsByPrefix(prefix, usedWords, limit = 20) {
+    // To produce up to `limit` valid results, we may need to fetch more
+    // from the trie if some matches are filtered out. Cap the fetch to
+    // limit * 5 to bound work; if we can't fill `limit`, return what we have.
+    const fetchLimit = limit * 5;
+    const raw = findWordsByPrefix(prefix, fetchLimit);
+    if (!raw.length) return [];
+    // Normalize usedWords to a Set of UPPERCASE strings
+    const usedSet = new Set();
+    if (usedWords) {
+      const iter = usedWords[Symbol.iterator] ? usedWords : Object.values(usedWords);
+      for (const w of iter) {
+        if (typeof w === 'string') usedSet.add(w.toUpperCase());
+      }
+    }
+    const valid = raw.filter((w) => !usedSet.has(w));
+    return valid.slice(0, limit);
+  }
+
+  /**
+   * getRandomWordByPrefix(prefix, usedWords) — string | null
+   * Picks a random valid word starting with `prefix`.
+   * Uses a seeded RNG keyed on `prefix` for reproducibility in tests.
+   *
+   * @param {string} prefix
+   * @param {Set<string>|string[]} usedWords
+   * @returns {string|null}
+   */
+  function getRandomWordByPrefix(prefix, usedWords) {
+    // Fetch a decent pool so the random pick is actually "random" and
+    // not just the first word every time. Cap at 100 for performance.
+    const pool = findValidWordsByPrefix(prefix, usedWords, 100);
+    if (!pool.length) return null;
+    const rng = _seededRng(_normalize(prefix));
+    const idx = Math.floor(rng() * pool.length);
+    return pool[idx];
+  }
+
+  /**
+   * getHintByPrefix(prefix, usedWords) — string | null
+   * Returns ONE suggested word starting with `prefix`, prioritizing
+   * LONGER words (more points per spec Tahap 23).
+   *
+   * @param {string} prefix
+   * @param {Set<string>|string[]} usedWords
+   * @returns {string|null}
+   */
+  function getHintByPrefix(prefix, usedWords) {
+    // Fetch a larger pool so the "longest" pick is meaningful.
+    // Cap at 500 to bound work.
+    const pool = findValidWordsByPrefix(prefix, usedWords, 500);
+    if (!pool.length) return null;
+    // Sort by length DESC; ties broken alphabetically for determinism
+    pool.sort((a, b) => {
+      if (b.length !== a.length) return b.length - a.length;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    });
+    return pool[0];
+  }
+
+  return {
+    findWordsByPrefix,
+    findValidWordsByPrefix,
+    getRandomWordByPrefix,
+    getHintByPrefix,
   };
 })();
 
@@ -1592,6 +1724,45 @@ const UIModule = (() => {
       toast.style.animation = 'toastSlideOut 0.3s ease forwards';
       toast.addEventListener('animationend', () => toast.remove());
     }, duration);
+  }
+
+  // --------------------------------------------------------
+  // Autocomplete (Tahap 08)
+  // --------------------------------------------------------
+  /**
+   * renderAutocomplete(suggestions, onPick) — renders suggestion chips
+   * inside #autocomplete-suggestions. Each chip is clickable; clicking
+   * it fills the word input and calls onPick.
+   *
+   * Tahap 38 will polish this (highlight matching prefix, keyboard nav,
+   * position-aware dropdown). For Tahap 08, we render a basic chip list.
+   *
+   * @param {string[]} suggestions — array of UPPERCASE words
+   * @param {Function} [onPick] — callback when a chip is clicked; receives the word
+   */
+  function renderAutocomplete(suggestions, onPick) {
+    const container = document.getElementById('autocomplete-suggestions');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!suggestions || !suggestions.length) return;
+    suggestions.slice(0, 10).forEach((word) => {
+      const chip = document.createElement('span');
+      chip.className = 'suggestion-chip';
+      chip.textContent = word;
+      chip.title = `Pilih "${word}"`;
+      chip.addEventListener('click', () => {
+        if (typeof onPick === 'function') onPick(word);
+        const input = document.getElementById('word-input');
+        if (input) input.value = word;
+      });
+      container.appendChild(chip);
+    });
+  }
+
+  /** clearAutocomplete() — empties the suggestions container. */
+  function clearAutocomplete() {
+    const container = document.getElementById('autocomplete-suggestions');
+    if (container) container.innerHTML = '';
   }
 
   // --------------------------------------------------------
@@ -2184,6 +2355,8 @@ const UIModule = (() => {
     toggleMinimap,
     updateHUD:       (data) => { /* Tahap 39 */ },
     showAutocomplete:(suggestions) => { /* Tahap 38 */ },
+    renderAutocomplete,
+    clearAutocomplete,
     animatePlacement:(cells) => { /* Tahap 43 */ },
     animateLifeLoss: (playerId) => { /* Tahap 44 */ }
   };
@@ -2337,6 +2510,20 @@ const GameController = (() => {
       }
     });
 
+    // Tahap 08 — autocomplete on input typing (debounced ~150ms)
+    let autocompleteTimer = null;
+    document.getElementById('word-input')?.addEventListener('input', (e) => {
+      if (autocompleteTimer) clearTimeout(autocompleteTimer);
+      autocompleteTimer = setTimeout(() => {
+        updateAutocomplete(e.target.value);
+      }, 150);
+    });
+    // Clear suggestions when input loses focus
+    document.getElementById('word-input')?.addEventListener('blur', () => {
+      // Small delay so chip click can fire first
+      setTimeout(() => UIModule.clearAutocomplete(), 200);
+    });
+
     // Zoom controls — now using ZoomModule
     document.getElementById('btn-zoom-in')?.addEventListener('click', () => {
       ZoomModule.zoomIn();
@@ -2454,6 +2641,25 @@ const GameController = (() => {
     if (result.reason === 'too_short' || result.reason === 'not_in_kbbi') {
       console.log('[Game] (placeholder) nyawa -1, skor -10 — akan diwiring di Tahap 19/23');
     }
+  }
+
+  /**
+   * updateAutocomplete(inputValue) — Tahap 08
+   * Fetches prefix suggestions via SearchModule and renders them.
+   * The full anchor-letter integration comes in Tahap 37 (arah selection);
+   * for now we use the raw input text as the prefix.
+   */
+  function updateAutocomplete(inputValue) {
+    if (!KBBIModule.isLoaded()) return;
+    const prefix = (inputValue || '').trim().toUpperCase();
+    if (prefix.length < 1) {
+      UIModule.clearAutocomplete();
+      return;
+    }
+    const suggestions = SearchModule.findWordsByPrefix(prefix, 10);
+    UIModule.renderAutocomplete(suggestions, (word) => {
+      console.log(`[Game] Autocomplete picked: "${word}"`);
+    });
   }
 
   // --- THEME ---

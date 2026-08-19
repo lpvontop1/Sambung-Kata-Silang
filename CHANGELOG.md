@@ -436,3 +436,116 @@
 - `tests/test-validation.js` — +440 lines (207 tests)
 - `README.md` — Tahap 07 progress checkbox + test inventory
 - `CHANGELOG.md` — this entry
+
+## [0.8.0] — Tahap 08: Pencarian Kata Berdasarkan Awalan
+
+### Added
+- `game.js` — **SearchModule** (new module) implementing all 4 spec
+  functions for prefix-based word search:
+  - `findWordsByPrefix(prefix, limit=20)` — normalize prefix
+    (trim+UPPERCASE) and delegate to `KBBIModule.getWordsByPrefix`.
+    Returns sorted-alphabetically KBBI words starting with prefix.
+  - `findValidWordsByPrefix(prefix, usedWords, limit=20)` — filters
+    out used words; accepts `usedWords` as Set OR Array. To produce
+    up to `limit` valid results when some matches are filtered, the
+    fetch from the trie is bumped to `limit * 5` (capped).
+  - `getRandomWordByPrefix(prefix, usedWords)` — picks a random word
+    from `findValidWordsByPrefix(prefix, used, 100)` pool. Uses a
+    seeded LCG keyed on `prefix` for reproducibility (same prefix →
+    same pick across runs, important for deterministic tests).
+  - `getHintByPrefix(prefix, usedWords)` — fetches a 500-word pool,
+    sorts by length DESC (ties broken alphabetically), returns the
+    longest. Prioritizes longer words per spec ("lebih banyak poin").
+  - `_normalize(prefix)` and `_seededRng(seedStr)` private helpers.
+- `game.js` — **KBBIModule.getWordsByPrefix** wired: previously a
+  Tahap 08 stub, now delegates to `trie.getWordsByPrefix(prefix,
+  limit)` and returns `[]` if not loaded.
+  - Note: `getWordsBySuffix` remains a stub per the tahap-by-tahap
+    structure (will be wired in Tahap 09).
+- `game.js` — **UIModule.renderAutocomplete(suggestions, onPick)** +
+  **`clearAutocomplete()`** for basic chip-based UI:
+  - Renders up to 10 `.suggestion-chip` spans inside
+    `#autocomplete-suggestions`.
+  - Each chip: click → fills `#word-input` value + invokes `onPick(word)`
+    callback (used by GameController to log picks).
+  - `clearAutocomplete()` empties the container (used on input blur).
+  - The existing `showAutocomplete` stub (labeled Tahap 38) is
+    preserved — Tahap 38 will polish with prefix highlighting,
+    keyboard navigation, position-aware dropdown.
+- `game.js` — **GameController**:
+  - `updateAutocomplete(inputValue)` — new private function: fetches
+    `SearchModule.findWordsByPrefix(prefix, 10)` and renders via
+    `UIModule.renderAutocomplete`.
+  - `input` event on `#word-input` (debounced 150ms) → calls
+    `updateAutocomplete(value)`.
+  - `blur` on `#word-input` → `clearAutocomplete()` after 200ms delay
+    (so chip click can fire first).
+- `tests/test-prefix-search.js` — **89 unit tests** covering:
+  1. SearchModule API surface (4 functions defined)
+  2. findWordsByPrefix — basic, normalize (lowercase/mixed/whitespace),
+     limit enforcement, sorted output, longer-prefix-fewer-matches
+  3. findWordsByPrefix — edge cases (empty, null, undefined, number,
+     whitespace, non-existent prefix, KBBI not loaded)
+  4. findValidWordsByPrefix — Set & Array inputs, case-insensitive
+     used words, exclude-all → [], limit=0 → []
+  5. getRandomWordByPrefix — valid string returned, starts with prefix,
+     is in KBBI, reproducible (seeded), excludes used words, null on
+     no-match / non-existent / empty prefix
+  6. getHintByPrefix — longest-first priority verified against the
+     actual longest ABAD-prefixed word, excludes used, null on no-match
+  7. KBBIModule.getWordsByPrefix wrapper — same output as
+     KBBITrie.getWordsByPrefix; returns [] when not loaded
+  8. UIModule.renderAutocomplete — 5 chips for 5 suggestions; each chip
+     has class 'suggestion-chip' and textContent matches; caps at 10
+     chips; [] and null clear container; chip click fills #word-input
+     with that word; custom onPick callback called
+  9. UIModule.clearAutocomplete — empties container; no-op on empty
+  10. GameController integration — `#word-input` has 'input' and
+      'keydown' listeners attached after `GameController.init()`
+  11. Real prefix queries against 74k-word KBBI dataset — AB/ABADI/
+      ABANG/SELASA/INDO/INDONESIA/ANAK/ANAK-ANAK all found
+  12. Performance — findWordsByPrefix < 50 ms per query; getHintByPrefix
+      < 200 ms (real: 0–1 ms)
+  13. Spec sanity — anchor 'S' scenario: returns 10 S-words; bot gets
+      random S-word excluding SELASA; hint returns longest S-word
+      (real: "SAMBUNG-BERSAMBUNG" 18 chars)
+
+### Mock DOM improvements (in test-prefix-search.js)
+- `_newElement(id)` factory — reusable mock element constructor with
+  full classList API, canvas getContext, _handlers stash.
+- `document.createElement(tag)` returns a FRESH element each call
+  (using random suffix) — fixes bug where chips shared state because
+  they were cached as the same object per tag.
+- `innerHTML` getter/setter — setting `innerHTML = ''` clears the
+  `children` array (mimics real DOM behavior). Fixes renderAutocomplete
+  clear tests.
+
+### Cross-check & bug fixes during this tahap
+1. **Mock `createElement` returning same cached element** for repeated
+   calls with same tag — caused all chips to share `textContent` and
+   `children` array grew with duplicate references. Fixed by returning
+   a fresh element each call.
+2. **Mock `innerHTML` setter was a plain property** — didn't actually
+   clear `children` array, so `renderAutocomplete([])` test failed.
+   Fixed with a getter/setter that resets `children` and `childNodes`.
+3. **Test expectation "5 ABAD words" wrong** — KBBI V has only 4
+   ABAD-prefixed entries (ABAD, ABADI, ABADIAH, ABADIAT). Adjusted
+   expectation to 4 and downstream assertions (3 remaining after
+   excluding ABADI).
+4. **Test expectation "SELASA in findWordsByPrefix('SEL', 50)" wrong**
+   — there are 200+ SEL-prefixed KBBI words; SELASA is alphabetically
+   past the 50th. Replaced with `findWordsByPrefix('SELASA', 10)`
+   which includes SELASA itself.
+5. **GameController.init() doesn't auto-run in Node vm** — DOMContentLoaded
+   never fires, so input event handlers weren't attached. Test now
+   explicitly calls `GameController.init()` (in try-catch) before
+   checking handler stash.
+
+### Files
+- `game.js` — +SearchModule (~120 lines), +renderAutocomplete (~30 lines),
+  +updateAutocomplete GameController wiring (~30 lines), KBBIModule
+  getWordsByPrefix stub wired (~5 lines)
+- `tests/test-prefix-search.js` — +500 lines (89 tests, includes
+  improved mock DOM factory reusable for future UI tests)
+- `README.md` — Tahap 08 progress checkbox + test inventory
+- `CHANGELOG.md` — this entry

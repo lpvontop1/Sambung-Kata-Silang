@@ -39,12 +39,13 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 │   ├── kbbi-meta.json     # Metadata & statistik dataset
 │   └── kbbi-{a..z}.json   # Chunk per-huruf untuk lazy loading
 ├── tests/
-│   ├── test-board.js       # Unit test BoardModule (88 tests)
-│   ├── test-render.js      # Unit test renderBoard (25 tests)
-│   ├── test-zoom.js        # Unit test ZoomModule (50 tests)
-│   ├── test-kbbi.js        # Unit test dataset KBBI (231 tests)
-│   ├── test-trie.js        # Unit test KBBITrie & KBBIModule (146 tests)
-│   └── test-validation.js  # Unit test ValidationModule (207 tests)
+│   ├── test-board.js         # Unit test BoardModule (88 tests)
+│   ├── test-render.js        # Unit test renderBoard (25 tests)
+│   ├── test-zoom.js          # Unit test ZoomModule (50 tests)
+│   ├── test-kbbi.js          # Unit test dataset KBBI (231 tests)
+│   ├── test-trie.js          # Unit test KBBITrie & KBBIModule (146 tests)
+│   ├── test-validation.js    # Unit test ValidationModule (207 tests)
+│   └── test-prefix-search.js # Unit test SearchModule (89 tests)
 ├── scripts/
 │   └── scrape-kbbi.js      # Skrip scraping & persiapan KBBI (rerunnable)
 ├── CHANGELOG.md            # Riwayat perubahan
@@ -63,7 +64,7 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 - [x] **Tahap 05** — Sumber Data KBBI — Scraping & Persiapan
 - [x] **Tahap 06** — Struktur Data Trie
 - [x] **Tahap 07** — Validasi Kata
-- [ ] **Tahap 08** — Pencarian Kata Berdasarkan Awalan
+- [x] **Tahap 08** — Pencarian Kata Berdasarkan Awalan
 - [ ] **Tahap 09** — Pencarian Kata Berdasarkan Akhiran
 
 ### Fase 3–10: *(待実装 — upcoming tahaps)*
@@ -100,12 +101,13 @@ node scripts/scrape-kbbi.js --validate
 ### 🧪 Menjalankan Tests
 
 ```bash
-node tests/test-board.js       # 88 tests — BoardModule (Tahap 02)
-node tests/test-render.js      # 25 tests — renderBoard (Tahap 03)
-node tests/test-zoom.js        # 50 tests — ZoomModule (Tahap 04)
-node tests/test-kbbi.js        # 231 tests — Dataset KBBI (Tahap 05)
-node tests/test-trie.js        # 146 tests — KBBITrie & KBBIModule (Tahap 06)
-node tests/test-validation.js  # 207 tests — ValidationModule (Tahap 07)
+node tests/test-board.js         # 88 tests — BoardModule (Tahap 02)
+node tests/test-render.js        # 25 tests — renderBoard (Tahap 03)
+node tests/test-zoom.js          # 50 tests — ZoomModule (Tahap 04)
+node tests/test-kbbi.js         # 231 tests — Dataset KBBI (Tahap 05)
+node tests/test-trie.js          # 146 tests — KBBITrie & KBBIModule (Tahap 06)
+node tests/test-validation.js   # 207 tests — ValidationModule (Tahap 07)
+node tests/test-prefix-search.js # 89 tests — SearchModule prefix search (Tahap 08)
 ```
 
 ## 📜 Lisensi
