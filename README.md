@@ -45,7 +45,8 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 │   ├── test-kbbi.js          # Unit test dataset KBBI (231 tests)
 │   ├── test-trie.js          # Unit test KBBITrie & KBBIModule (146 tests)
 │   ├── test-validation.js    # Unit test ValidationModule (207 tests)
-│   └── test-prefix-search.js # Unit test SearchModule (89 tests)
+│   ├── test-prefix-search.js  # Unit test SearchModule prefix (89 tests)
+│   └── test-suffix-search.js  # Unit test SearchModule suffix (81 tests)
 ├── scripts/
 │   └── scrape-kbbi.js      # Skrip scraping & persiapan KBBI (rerunnable)
 ├── CHANGELOG.md            # Riwayat perubahan
@@ -65,7 +66,7 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 - [x] **Tahap 06** — Struktur Data Trie
 - [x] **Tahap 07** — Validasi Kata
 - [x] **Tahap 08** — Pencarian Kata Berdasarkan Awalan
-- [ ] **Tahap 09** — Pencarian Kata Berdasarkan Akhiran
+- [x] **Tahap 09** — Pencarian Kata Berdasarkan Akhiran
 
 ### Fase 3–10: *(待実装 — upcoming tahaps)*
 
@@ -108,6 +109,7 @@ node tests/test-kbbi.js         # 231 tests — Dataset KBBI (Tahap 05)
 node tests/test-trie.js          # 146 tests — KBBITrie & KBBIModule (Tahap 06)
 node tests/test-validation.js   # 207 tests — ValidationModule (Tahap 07)
 node tests/test-prefix-search.js # 89 tests — SearchModule prefix search (Tahap 08)
+node tests/test-suffix-search.js  # 81 tests — SearchModule suffix search (Tahap 09)
 ```
 
 ## 📜 Lisensi

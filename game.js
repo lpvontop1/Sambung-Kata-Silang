@@ -867,8 +867,11 @@ const KBBIModule = (() => {
       if (!loaded || !trie) return [];
       return trie.getWordsByPrefix(prefix, limit);
     },
-    // Tahap 09 — stub still (Tahap 08 only wires prefix side)
-    getWordsBySuffix: (suffix, limit) => { /* Tahap 09 */ },
+    // Tahap 09 — wired: delegate to KBBITrie.getWordsBySuffix (uses reverse trie)
+    getWordsBySuffix: (suffix, limit) => {
+      if (!loaded || !trie) return [];
+      return trie.getWordsBySuffix(suffix, limit);
+    },
   };
 })();
 
@@ -1191,11 +1194,102 @@ const SearchModule = (() => {
     return pool[0];
   }
 
+  // ----------------------------------------------------------------
+  // Suffix search (Tahap 09) — mirror of prefix search above.
+  // Uses the reverse trie via KBBIModule.getWordsBySuffix.
+  // Spec: used when player picks arah KIRI or ATAS so that the new
+  // word's LAST letter matches the anchor cell's letter.
+  // ----------------------------------------------------------------
+
+  /**
+   * findWordsBySuffix(suffix, limit=20) — string[]
+   * Returns up to `limit` KBBI words ending with `suffix`.
+   * Spec: "Panggil KBBITrie.getWordsBySuffix(suffix, limit)".
+   *
+   * @param {string} suffix
+   * @param {number} [limit=20]
+   * @returns {string[]} — KBBI words ending with `suffix`
+   */
+  function findWordsBySuffix(suffix, limit = 20) {
+    const s = _normalize(suffix);
+    if (!s) return [];
+    if (!KBBIModule.isLoaded()) return [];
+    return KBBIModule.getWordsBySuffix(s, limit);
+  }
+
+  /**
+   * findValidWordsBySuffix(suffix, usedWords, limit=20) — string[]
+   * Like findWordsBySuffix but excludes any word already in `usedWords`.
+   *
+   * @param {string} suffix
+   * @param {Set<string>|string[]} usedWords — words already played (UPPERCASE)
+   * @param {number} [limit=20]
+   * @returns {string[]} — valid (not-yet-used) candidate words ending with suffix
+   */
+  function findValidWordsBySuffix(suffix, usedWords, limit = 20) {
+    // To produce up to `limit` valid results, we may need to fetch more
+    // from the trie if some matches are filtered out. Cap the fetch to
+    // limit * 5 to bound work; if we can't fill `limit`, return what we have.
+    const fetchLimit = limit * 5;
+    const raw = findWordsBySuffix(suffix, fetchLimit);
+    if (!raw.length) return [];
+    const usedSet = new Set();
+    if (usedWords) {
+      const iter = usedWords[Symbol.iterator] ? usedWords : Object.values(usedWords);
+      for (const w of iter) {
+        if (typeof w === 'string') usedSet.add(w.toUpperCase());
+      }
+    }
+    const valid = raw.filter((w) => !usedSet.has(w));
+    return valid.slice(0, limit);
+  }
+
+  /**
+   * getRandomWordBySuffix(suffix, usedWords) — string | null
+   * Picks a random valid word ending with `suffix`.
+   * Uses a seeded RNG keyed on `suffix` for reproducibility in tests.
+   *
+   * @param {string} suffix
+   * @param {Set<string>|string[]} usedWords
+   * @returns {string|null}
+   */
+  function getRandomWordBySuffix(suffix, usedWords) {
+    const pool = findValidWordsBySuffix(suffix, usedWords, 100);
+    if (!pool.length) return null;
+    const rng = _seededRng(_normalize(suffix));
+    const idx = Math.floor(rng() * pool.length);
+    return pool[idx];
+  }
+
+  /**
+   * getHintBySuffix(suffix, usedWords) — string | null
+   * Returns ONE suggested word ending with `suffix`, prioritizing
+   * LONGER words (more points per spec Tahap 23).
+   *
+   * @param {string} suffix
+   * @param {Set<string>|string[]} usedWords
+   * @returns {string|null}
+   */
+  function getHintBySuffix(suffix, usedWords) {
+    const pool = findValidWordsBySuffix(suffix, usedWords, 500);
+    if (!pool.length) return null;
+    pool.sort((a, b) => {
+      if (b.length !== a.length) return b.length - a.length;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    });
+    return pool[0];
+  }
+
   return {
     findWordsByPrefix,
     findValidWordsByPrefix,
     getRandomWordByPrefix,
     getHintByPrefix,
+    // Tahap 09 — suffix-side mirrors
+    findWordsBySuffix,
+    findValidWordsBySuffix,
+    getRandomWordBySuffix,
+    getHintBySuffix,
   };
 })();
 
@@ -2662,6 +2756,50 @@ const GameController = (() => {
     });
   }
 
+  /**
+   * showAnchorSuggestions(anchorLetter, direction, usedWords) — Tahap 09
+   * Direction-aware autocomplete:
+   *   - 'right' / 'down' → prefix search (new word's FIRST letter = anchor)
+   *   - 'left' / 'up'   → suffix search (new word's LAST letter = anchor)
+   *
+   * Used when the player has selected an anchor cell + direction. Per spec:
+   *   KIRI: "kata baru harus berakhiran huruf anchor (suffix matching)"
+   *   ATAS: same (suffix matching)
+   *   KANAN / BAWAH: new word's first letter must equal anchor (prefix matching)
+   *
+   * The full anchor-cell UI integration is Tahap 37; for Tahap 09 we
+   * expose this helper so callers (tests, future UI, bot AI) can use
+   * suffix search when direction demands it.
+   *
+   * @param {string} anchorLetter — single letter (the anchor cell's letter)
+   * @param {string} direction — 'right' | 'left' | 'down' | 'up'
+   * @param {Set<string>|string[]} [usedWords] — words already played
+   * @param {number} [limit=10] — max suggestions to show
+   */
+  function showAnchorSuggestions(anchorLetter, direction, usedWords, limit = 10) {
+    if (!KBBIModule.isLoaded()) return;
+    const letter = (anchorLetter || '').trim().toUpperCase();
+    if (letter.length !== 1 || !/^[A-Z]$/.test(letter)) {
+      UIModule.clearAutocomplete();
+      return;
+    }
+    const dir = (direction || '').toLowerCase();
+    let suggestions;
+    if (dir === 'left' || dir === 'up') {
+      // Suffix matching: new word's LAST letter = anchor
+      suggestions = SearchModule.findValidWordsBySuffix(letter, usedWords || new Set(), limit);
+    } else if (dir === 'right' || dir === 'down') {
+      // Prefix matching: new word's FIRST letter = anchor
+      suggestions = SearchModule.findValidWordsByPrefix(letter, usedWords || new Set(), limit);
+    } else {
+      UIModule.clearAutocomplete();
+      return;
+    }
+    UIModule.renderAutocomplete(suggestions, (word) => {
+      console.log(`[Game] Anchor suggestion picked (dir=${dir}): "${word}"`);
+    });
+  }
+
   // --- THEME ---
   function toggleTheme(theme) {
     if (theme === 'light') {
@@ -2689,7 +2827,8 @@ const GameController = (() => {
   return {
     init,
     startGame,
-    submitWord
+    submitWord,
+    showAnchorSuggestions,
   };
 })();
 

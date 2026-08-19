@@ -549,3 +549,115 @@
   improved mock DOM factory reusable for future UI tests)
 - `README.md` — Tahap 08 progress checkbox + test inventory
 - `CHANGELOG.md` — this entry
+
+## [0.9.0] — Tahap 09: Pencarian Kata Berdasarkan Akhiran
+
+### Added
+- `game.js` — **SearchModule suffix functions** (mirrors Tahap 08 prefix):
+  - `findWordsBySuffix(suffix, limit=20)` — normalize suffix (trim+
+    UPPERCASE) and delegate to `KBBIModule.getWordsBySuffix`, which
+    walks the reverse trie (each word stored reversed: KUCING → GNIUK).
+    Spec: "Panggil KBBITrie.getWordsBySuffix(suffix, limit)".
+  - `findValidWordsBySuffix(suffix, usedWords, limit=20)` — filters
+    out used words; accepts Set OR Array; fetches limit*5 from trie.
+  - `getRandomWordBySuffix(suffix, usedWords)` — random pick from a
+    100-word pool; seeded LCG keyed on `suffix` for reproducibility.
+  - `getHintBySuffix(suffix, usedWords)` — fetches 500-word pool,
+    sorts by length DESC (ties alphabetical), returns longest.
+- `game.js` — **KBBIModule.getWordsBySuffix** wired: previously a
+  Tahap 09 stub, now delegates to `trie.getWordsBySuffix(suffix,
+  limit)` and returns `[]` if not loaded. Uses the reverse trie that
+  was built in Tahap 06 (each insert also reversed).
+- `game.js` — **GameController.showAnchorSuggestions(anchorLetter,
+  direction, usedWords, limit=10)** — direction-aware autocomplete:
+  - `'left'` or `'up'` → **suffix search** (new word's LAST letter
+    must equal the anchor letter — per spec: "kata baru harus
+    berakhiran huruf anchor")
+  - `'right'` or `'down'` → **prefix search** (new word's FIRST
+    letter must equal the anchor letter)
+  - Invalid direction or multi-char/non-letter anchor → clears
+    suggestions container (graceful no-op)
+  - Excludes usedWords from results
+  - Full anchor-cell UI integration is Tahap 37; for Tahap 09 we
+    expose this helper so future UI, tests, and bot AI can use
+    direction-aware search
+- `tests/test-suffix-search.js` — **81 unit tests** mirroring
+  test-prefix-search.js coverage:
+  1. SearchModule suffix API surface (4 functions defined; prefix
+     functions still present from Tahap 08)
+  2. findWordsBySuffix — basic, normalize (lowercase/mixed/whitespace),
+     limit enforcement, longer-suffix-fewer-matches
+  3. findWordsBySuffix — edge cases (empty/null/undefined/number/
+     whitespace/non-existent/KBBI not loaded)
+  4. findValidWordsBySuffix — Set & Array inputs, case-insensitive
+     used words, exclude-all → [], limit=0 → []
+  5. getRandomWordBySuffix — valid string, ends with suffix, in KBBI,
+     reproducible (seeded), excludes used, null on no-match
+  6. getHintBySuffix — longest-first priority verified against actual
+     longest "SA"-suffixed word in pool; excludes used; null on no-match
+  7. KBBIModule.getWordsBySuffix wrapper — same output as
+     KBBITrie.getWordsBySuffix; returns [] when not loaded
+  8. Symmetry with prefix search — INDONESIA & ABADI found via both
+     findWordsByPrefix(X) and findWordsBySuffix(X)
+  9. Direction-aware GameController.showAnchorSuggestions — LEFT/UP
+     use suffix (all chips end with anchor), RIGHT/DOWN use prefix
+     (all chips start with anchor); invalid direction/anchor → no chips
+  10. Spec anchor-letter scenario — POS to left of "S" from SELASA:
+      suffix search for "S" returns words ending in "S"; POS verified
+      findable via findWordsBySuffix('POS') (POS not in first 50 S-words
+      due to reverse-trie DFS yielding many short S-ending words first)
+  11. Real suffix queries — SA/NG/I/INDONESIA/BASA suffixes return
+      words ending in those strings
+  12. Performance — findWordsBySuffix < 50 ms; getHintBySuffix < 200 ms
+      (real: 0 ms)
+  13. Hyphenated reduplications — KUDA-KUDA via suffix "KUDA",
+      ANAK-ANAK via suffix "ANAK", MATA-MATA via suffix "MATA"
+
+### Direction-aware behavior (key spec requirement)
+Per Tahap 09 spec:
+- **Arah KIRI** (LEFT): new word placed to the left of anchor; new
+  word's LAST letter must equal anchor letter → suffix matching.
+  Spec example: POS [P][O][S] placed left of "S" from SELASA — the
+  "S" of POS attaches to "S" of SELASA.
+- **Arah ATAS** (UP): new word placed above anchor; new word's LAST
+  letter must equal anchor letter → suffix matching.
+- **Arah KANAN** (RIGHT) / **BAWAH** (DOWN): new word's FIRST letter
+  must equal anchor letter → prefix matching (already implemented in
+  Tahap 08).
+
+`GameController.showAnchorSuggestions(letter, dir, used, limit)` is
+the direction-aware dispatcher: LEFT/UP → `SearchModule.findValidWords
+BySuffix`; RIGHT/DOWN → `findValidWordsByPrefix`. Returns nothing
+(clears the container) for invalid direction or anchor.
+
+### Cross-check & bugs found and fixed during this tahap
+1. **Test bug: "POS included in findWordsBySuffix('S', 50)"** — POS
+   isn't in the first 50 S-ending words because the reverse trie DFS
+   yields many short S-ending words alphabetically (by reversed prefix)
+   before reaching POS's reverse-prefix "SOP". Fixed test to verify POS
+   via the more specific suffix "POS" itself, which is guaranteed to
+   include POS.
+
+### Performance
+- Suffix search is symmetrically fast as prefix search (~0 ms per
+  query for typical 2-3 char suffixes), thanks to the reverse trie
+  built in Tahap 06.
+- getHintBySuffix fetches a 500-word pool then sorts by length: still
+  sub-millisecond in practice.
+
+### Files
+- `game.js` — +SearchModule suffix functions (~95 lines),
+  +GameController.showAnchorSuggestions (~45 lines), KBBIModule
+  getWordsBySuffix stub wired (~5 lines)
+- `tests/test-suffix-search.js` — +480 lines (81 tests)
+- `README.md` — Tahap 09 progress checkbox + test inventory
+- `CHANGELOG.md` — this entry
+
+### Fase 2 complete
+With Tahap 09, Fase 2 (KBBI & Validasi Kata) is complete:
+- Tahap 05: KBBI data scraped/prepared
+- Tahap 06: KBBITrie data structure (with reverse trie for suffix)
+- Tahap 07: Word validation (isValidWord, validateWordWithDetail, isTypo)
+- Tahap 08: Prefix search (findWordsByPrefix + 3 helpers + autocomplete UI)
+- Tahap 09: Suffix search (findWordsBySuffix + 3 helpers + direction-aware UI)
+Next up: Fase 3 — Mekanik Penempatan Kata (Tahap 10–18).
