@@ -1710,13 +1710,121 @@ const PlacementModule = (() => {
     return _ok(cells, wordObj, 'placed_down');
   }
 
+  /**
+   * placeWordUp(word, anchorRow, anchorCol, wordId, playerId) — Tahap 13
+   *
+   * Place `word` extending UPWARD from the anchor cell at
+   * (anchorRow, anchorCol). The anchor cell must already be filled
+   * with a letter, and the word's LAST letter must equal that letter
+   * (per spec: "Huruf TERAKHIR kata harus = huruf di anchor cell" —
+   * SAME as placeWordLeft, just vertical instead of horizontal).
+   *
+   * Spec example: anchor "E" at (2,1) from word "SELASA" (horizontal),
+   * word "ENDE" (ends with E) → E(-1,1), N(0,1), D(1,1), E(2,1)=anchor.
+   * Position formula: huruf ke-i → (anchorRow - (wordLength - 1 - i), anchorCol)
+   * (Negative row indices are supported — the cells Map allows any integer keys.)
+   *
+   * Validations (per Tahap 13 spec):
+   *   1. Word is a valid KBBI word
+   *   2. Word hasn't been played before (no repeat)
+   *   3. LAST letter of word === anchor cell's letter
+   *   4. No overlap conflict (each filled cell in path must have same letter;
+   *      intersection with same letter is OK; also covers spec point 6:
+   *      "vertical word must not crash into horizontal word")
+   *   5. Vertical gap rule: cells immediately above (topmost) & below
+   *      (bottommost=anchor) the new word's extent must NOT be part of
+   *      a vertical word (except at intersections)
+   *
+   * @param {string} word
+   * @param {number} anchorRow
+   * @param {number} anchorCol
+   * @param {string|null} [wordId]
+   * @param {string} [playerId]
+   * @returns {{ success: boolean, cells: Array<{row,col,letter}>, word: object|null, reason: string }}
+   *   On success: { success: true, cells: [...N positions...], word: Word, reason: 'placed_up' }
+   */
+  function placeWordUp(word, anchorRow, anchorCol, wordId, playerId) {
+    // 1. Normalize & non-empty
+    const W = _normalize(word);
+    if (!W) return _fail('empty_word');
+
+    // 2. KBBI must be loaded
+    if (!KBBIModule.isLoaded()) return _fail('kbbi_not_loaded');
+
+    // 3. Valid KBBI word
+    if (!KBBIModule.search(W)) return _fail('not_in_kbbi');
+
+    // 4. No-repeat
+    if (BoardModule.hasWord(W)) return _fail('word_already_used');
+
+    // 5. Anchor cell must exist with a letter
+    const anchor = BoardModule.getCell(anchorRow, anchorCol);
+    if (!anchor || !anchor.letter) return _fail('no_anchor');
+
+    // 6. LAST letter must equal anchor letter (per spec — symmetric to
+    //    placeWordLeft's last-letter rule; DIFFERENT from RIGHT/DOWN
+    //    which check FIRST letter)
+    if (W[W.length - 1] !== anchor.letter) return _fail('last_letter_mismatch');
+
+    // 7. Compute positions for 'up' direction.
+    //    Per spec: huruf ke-i → (anchorRow - (wordLength - 1 - i), anchorCol)
+    //    So: i=0 (first letter) → anchorRow - (N-1) = topmost
+    //        i=N-1 (last letter) → anchorRow = bottommost = anchor
+    //    _positionsForDirection's 'up' formula `row -= (N - 1 - i)` matches.
+    const cells = _positionsForDirection(W, anchorRow, anchorCol, 'up');
+    if (!cells) return _fail('invalid_direction');
+
+    // 8. Overlap conflict — each filled cell in path must have same letter
+    //    (also covers spec point 6: vertical word must not crash into
+    //    horizontal word — if letters differ at a crossing, this fires)
+    for (const c of cells) {
+      const existing = BoardModule.getCell(c.row, c.col);
+      if (existing && existing.letter && existing.letter !== c.letter) {
+        return _fail('overlap_conflict');
+      }
+    }
+
+    // 9. Vertical gap rule — cells immediately ABOVE the topmost position
+    //    and BELOW the anchor (bottommost) must NOT be part of a vertical
+    //    word (else our new word would merge with an adjacent vertical
+    //    word, gap = 0).
+    //    - "Before" cell (above topmost): (anchorRow - wordLength, anchorCol)
+    //    - "After" cell (below anchor): (anchorRow + 1, anchorCol)
+    const beforeRow = anchorRow - W.length;
+    const beforeCell = BoardModule.getCell(beforeRow, anchorCol);
+    if (beforeCell && beforeCell.letter &&
+        _isPartOfVerticalWord(beforeRow, anchorCol)) {
+      return _fail('adjacent_word_before');
+    }
+    const afterRow = anchorRow + 1;
+    const afterCell = BoardModule.getCell(afterRow, anchorCol);
+    if (afterCell && afterCell.letter &&
+        _isPartOfVerticalWord(afterRow, anchorCol)) {
+      return _fail('adjacent_word_after');
+    }
+
+    // 10. All validations passed — create the Word object and place cells.
+    //     Word's start position is the TOPMOST cell (where the first letter
+    //     goes), with direction='up' so getWordCellPositions walks it
+    //     correctly (using the updated Tahap 11 formula: row += i for 'up').
+    const startRow = anchorRow - (W.length - 1);
+    const wordObj = BoardModule.createWord(W, startRow, anchorCol, 'up',
+                                            playerId, wordId);
+    for (const c of cells) {
+      BoardModule.setCell(c.row, c.col, c.letter, wordObj.id, 'vertical');
+    }
+    BoardModule.addWord(wordObj);
+
+    return _ok(cells, wordObj, 'placed_up');
+  }
+
   // Public API
   return {
     placeWordRight,
     placeWordLeft,
     placeWordDown,
+    placeWordUp,
     // Stubs preserved for later tahaps
-    placeWordUp:    (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 13 */ },
     calculatePositions: (word, anchorRow, anchorCol, direction) => { /* Tahap 18 */ },
   };
 })();

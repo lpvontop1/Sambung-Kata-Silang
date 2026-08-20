@@ -1087,3 +1087,145 @@ anchor letter).
 - `tests/test-placement-down.js` — +575 lines (89 tests)
 - `README.md` — Tahap 12 progress checkbox + test inventory entry
 - `CHANGELOG.md` — this entry
+
+## [1.3.0] — Tahap 13: Mekanik Penempatan — Vertikal Atas
+
+### Added
+- `game.js` — **PlacementModule.placeWordUp** fully implemented:
+  - Signature: `placeWordUp(word, anchorRow, anchorCol, wordId, playerId)`
+  - Returns `PlacementResult`: `{ success, cells, word, reason }`
+    - On success: `{ success: true, cells: [...N positions...], word: Word,
+      reason: 'placed_up' }`
+    - On failure: same shape with reasons listed below
+  - Spec example verified: anchor "E" at (2,1) from word "SELASA"
+    (horizontal), word "ENDE" (ends with E) → cells E(-1,1), N(0,1),
+    D(1,1), E(2,1)=anchor. **Negative row indices supported** (cells
+    Map allows any integer keys). Position formula per spec:
+    `huruf ke-i → (anchorRow - (wordLength - 1 - i), anchorCol)`
+
+  Validations (per Tahap 13 spec, in order):
+  1. `empty_word` — non-empty normalized word
+  2. `kbbi_not_loaded` — KBBIModule.isLoaded() check
+  3. `not_in_kbbi` — KBBIModule.search fails
+  4. `word_already_used` — BoardModule.hasWord (no-repeat)
+  5. `no_anchor` — anchor cell doesn't exist or has no letter
+  6. `last_letter_mismatch` — word's LAST letter must equal anchor
+     letter (per spec: "Huruf TERAKHIR kata harus = huruf di anchor
+     cell" — SAME as placeWordLeft, just vertical)
+  7. `overlap_conflict` — filled cell in path has different letter
+     (intersection with same letter is OK; also covers spec point 6:
+     "vertical word must not crash into horizontal word")
+  8. `adjacent_word_before` — cell at (anchorRow - wordLength, anchorCol)
+     is part of a VERTICAL word (gap rule above topmost)
+  9. `adjacent_word_after` — cell at (anchorRow + 1, anchorCol) is
+     part of a VERTICAL word (gap rule below anchor/bottommost)
+  10. All passed → createWord + setCell + addWord → return success
+
+  Word stored with FORWARD text and direction='up'. The start position
+  is the TOPMOST cell (anchorRow - (wordLength - 1)), and
+  getWordCellPositions uses the formula `row = startRow + i` (updated
+  in Tahap 11 refactor for direction='up') to walk the cells
+  correctly downward from topmost to anchor.
+
+### Spec interpretation notes
+- **Last-letter matching (same as LEFT)**: per spec, when placing a
+  word UP from an anchor, the word's LAST letter must equal the
+  anchor's letter (so the new word's last cell attaches to the anchor
+  at the bottommost position). This is symmetric to placeWordLeft's
+  last-letter rule, applied vertically.
+- **Negative row indices**: spec example "ENDE" up from anchor at
+  (2, 1) produces cells at rows -1, 0, 1, 2. The board's cells Map
+  supports any integer (row, col) pair, so negative indices work
+  transparently. The board grows dynamically upward when needed.
+- **Vertical gap rule**: cells immediately ABOVE the topmost
+  (anchorRow - wordLength, anchorCol) and BELOW the anchor
+  (anchorRow + 1, anchorCol) must NOT be part of a vertical word, or
+  we'd merge two vertical words (gap = 0). Symmetric to placeWordLeft's
+  gap rule but for vertical adjacency.
+- **Spec point 6 ("vertical must not crash into horizontal")**: subsumed
+  by overlap_conflict (#4). If a vertical-up word's path crosses a
+  horizontal word's cell with a DIFFERENT letter, overlap_conflict
+  fires. If letters match, it's an intersection (allowed).
+- **Gap rule excludes intersections**: a cell at the start/end of
+  our new word that's part of a HORIZONTAL word is OK (just a
+  crossing point). Only VERTICAL words trigger the vertical gap rule.
+- **Reuses existing helpers**: `_isPartOfVerticalWord` (added in
+  Tahap 12) and `_positionsForDirection`'s 'up' formula `row -= (N - 1 - i)`
+  (updated in Tahap 11). No new helpers needed for Tahap 13.
+
+### Tests (tests/test-placement-up.js, 86 tests)
+  1. API surface (placeWordUp wired; all 3 previous placement
+     functions still work; only calculatePositions remains as stub)
+  2. Successful placement (ENDE up from anchor E via SELASA
+     horizontal seed; falls back to CINTA from anchor A if ENDE
+     not in KBBI)
+  3. Result shape: {success, cells, word, reason} verified (including
+     word.startRow = -1 — topmost cell at negative row)
+  4. Word written to board + getWordCellPositions consistency (cells
+     at rows -1, 0, 1, 2 verified; intersection cell's partOfWords
+     has both seed-selasa and new word IDs)
+  5. Last-letter mismatch (anchor E, word BERLARI ends with I → fails)
+  6. Word not in KBBI (XYZQQ)
+  7. Word already used (ENDE twice; second fails)
+  8. Anchor cell empty (BAGUS at empty cell — fresh KBBI word)
+  9. KBBI not loaded (after reset)
+  10. Empty word
+  11. Non-string word (null/undefined/number)
+  12. Overlap conflict (isolated 'X' planted at (1,1); ENDE placement
+      fails because D ≠ X at that cell)
+  13. Overlap OK (intersection with same letter — vertical-up ENDE
+      crosses horizontal MNOP at (0,1)=N; intersection cell's
+      partOfWords has both word IDs)
+  14. Gap rule before (vertical "KASIH" at (2,5)-(6,5) ends right
+      above the topmost cell at (7,5) for ENDE up from (10,5); ENDE
+      fails with adjacent_word_before)
+  15. Gap rule after (vertical "KASIH" at (6,5)-(10,5) starts right
+      below the anchor at (5,5) for ENDE up from (5,5); ENDE fails
+      with adjacent_word_after)
+  16. Gap rule NOT triggered when below-cell is part of HORIZONTAL
+      word (horizontal ABCD at (6,4)-(6,7) has B at (6,5); ENDE up
+      from (5,5) succeeds because (6,5)=B is horizontal, not vertical)
+  17. Multiple successful placements (seed SELASA + ENDE up from
+      (10,1) + CINTA up from (10,3) → 3 words on board)
+  18. Case-insensitivity (lowercase/mixed/whitespace-padded → UPPERCASE)
+  19. Hyphenated word (ANAK-ANAK up from anchor K — 9 cells including
+      hyphen at position 4)
+  20. Spec example exact-match (assertDeepEqual for each cell:
+      E at (-1,1) negative row, N at (0,1), D at (1,1), E at (2,1)
+      anchor)
+  21. wordId & playerId pass-through (BoardModule.getWord(customId)
+      returns the word)
+  22. Spec validation order (not_in_kbbi before no_anchor;
+      word_already_used before no_anchor; fresh KBBI on empty cell →
+      no_anchor)
+
+### Files
+- `game.js` — +placeWordUp (~95 lines). No new helpers needed
+  (reuses _isPartOfVerticalWord from Tahap 12 and _positionsForDirection's
+  'up' formula from Tahap 11 refactor).
+- `tests/test-placement-up.js` — +550 lines (86 tests)
+- `README.md` — Tahap 13 progress checkbox + test inventory entry
+- `CHANGELOG.md` — this entry
+
+### Fase 3 progress
+With Tahap 13, all 4 placement directions (right, left, down, up) are
+complete. The PlacementModule now exposes:
+- placeWordRight (Tahap 10) — anchor at position 0 (FIRST letter)
+- placeWordLeft (Tahap 11) — anchor at position N-1 (LAST letter)
+- placeWordDown (Tahap 12) — anchor at position 0 (FIRST letter)
+- placeWordUp (Tahap 13) — anchor at position N-1 (LAST letter)
+- calculatePositions — still stub (Tahap 18 will wire it as public API
+  for the existing _positionsForDirection helper)
+
+Remaining Fase 3 tahaps:
+- Tahap 14: Deteksi & Validasi Persilangan (Intersection)
+- Tahap 15: Deteksi & Validasi Cabang Baru (Branch)
+- Tahap 16: Validasi Overlap & Konflik Penempatan (already covered
+  by placeWord* overlap_conflict check, but Tahap 16 may add
+  validateAccidentalWords for cells above/below horizontal paths
+  creating accidental vertical words)
+- Tahap 17: Sistem Daftar Kata Sudah Dipakai (already covered by
+  BoardModule.wordSet + hasWord, but Tahap 17 will formalize
+  ValidationModule.isWordUsed wrapper)
+- Tahap 18: Kalkulasi Posisi & Anchoring (formalize
+  calculatePositions as public API)
