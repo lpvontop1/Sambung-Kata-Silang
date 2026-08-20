@@ -958,3 +958,132 @@ anchor letter).
 - `tests/test-placement-left.js` — +530 lines (83 tests)
 - `README.md` — Tahap 11 progress checkbox + test inventory entry
 - `CHANGELOG.md` — this entry
+
+## [1.2.0] — Tahap 12: Mekanik Penempatan — Vertikal Bawah
+
+### Added
+- `game.js` — **PlacementModule.placeWordDown** fully implemented:
+  - Signature: `placeWordDown(word, anchorRow, anchorCol, wordId, playerId)`
+  - Returns `PlacementResult`: `{ success, cells, word, reason }`
+    - On success: `{ success: true, cells: [...N positions...], word: Word,
+      reason: 'placed_down' }`
+    - On failure: same shape with reasons listed below
+  - Spec example verified: anchor "L" at (2,2) from word "SELASA"
+    (horizontal), word "LAOS" (starts with L) → cells L(2,2)=anchor,
+    A(3,2), O(4,2), S(5,2). Position formula per spec:
+    `huruf ke-i → (anchorRow + i, anchorCol)`
+
+  Validations (per Tahap 12 spec, in order):
+  1. `empty_word` — non-empty normalized word
+  2. `kbbi_not_loaded` — KBBIModule.isLoaded() check
+  3. `not_in_kbbi` — KBBIModule.search fails
+  4. `word_already_used` — BoardModule.hasWord (no-repeat)
+  5. `no_anchor` — anchor cell doesn't exist or has no letter
+  6. `first_letter_mismatch` — word's FIRST letter must equal anchor
+     letter (per spec: "Huruf PERTAMA kata harus = huruf di anchor
+     cell" — SAME as placeWordRight, just vertical)
+  7. `overlap_conflict` — filled cell in path has different letter
+     (intersection with same letter is OK; also covers spec point 6:
+     "vertical word must not crash into horizontal word — cells passed
+     through but not intersections must have matching letter")
+  8. `adjacent_word_before` — cell at (anchorRow - 1, anchorCol) is
+     part of a VERTICAL word (gap rule above the anchor/topmost)
+  9. `adjacent_word_after` — cell at (anchorRow + wordLength, anchorCol)
+     is part of a VERTICAL word (gap rule below the last letter/bottommost)
+  10. All passed → createWord + setCell + addWord → return success
+
+- `game.js` — **`_isPartOfVerticalWord(row, col)`** private helper added
+  (symmetric to `_isPartOfHorizontalWord`):
+  - Checks if a cell is part of any vertical word (direction='down' or 'up')
+  - First checks `cell.partOfWords` for accurate intersection-aware lookup
+  - Falls back to `cell.direction === 'vertical'` for seed-anchor cells
+    (no addWord called)
+  - Used by the vertical gap rule for placeWordDown (this tahap) and
+    placeWordUp (Tahap 13)
+
+### Spec interpretation notes
+- **First-letter matching (same as RIGHT)**: per spec, when placing a
+  word DOWN from an anchor, the word's FIRST letter must equal the
+  anchor's letter. The anchor is the topmost cell of the new word
+  (position 0). Cells extend downward from anchor.
+- **Vertical gap rule (symmetric to horizontal gap rule for RIGHT/LEFT)**:
+  cells immediately above (anchorRow - 1, anchorCol) and below
+  (anchorRow + wordLength, anchorCol) must NOT be part of a vertical
+  word, or we'd merge two vertical words (gap = 0).
+- **Spec point 6 ("vertical must not crash into horizontal")**: this
+  is subsumed by overlap_conflict (#4 in our implementation). If a
+  vertical word's path crosses a horizontal word's cell with a
+  DIFFERENT letter, overlap_conflict fires. If the letters match, it's
+  an intersection (allowed by spec — "kecuali persilangan").
+- **Gap rule excludes intersections**: per spec point 5
+  ("kecuali persilangan"). So a cell at the start/end of our new word
+  that's part of a HORIZONTAL word is OK (it's just a crossing point).
+  Only VERTICAL words trigger the vertical gap rule.
+- **Word stored with FORWARD text**: Word.text = "LAOS" (forward),
+  direction='down', startRow=anchorRow, startCol=anchorCol.
+  getWordCellPositions uses formula `row = startRow + i` (already
+  correct from Tahap 02, unchanged in Tahap 11 refactor).
+
+### Tests (tests/test-placement-down.js, 89 tests)
+  1. API surface (placeWordDown wired; placeWordRight/Left still work
+     from Tahap 10/11; stubs for up/calculatePositions preserved)
+  2. Successful placement (LAOS down from anchor L via SELASA
+     horizontal seed)
+  3. Result shape: {success, cells, word, reason} verified
+  4. Word written to board + getWordCellPositions consistency (the
+     latter yields same cells as result.cells; intersection cell's
+     partOfWords has both seed-selasa and new word IDs)
+  5. First-letter mismatch (anchor L, word BERLARI starts with B → fails)
+  6. Word not in KBBI (XYZQQ)
+  7. Word already used (LAOS twice; second fails)
+  8. Anchor cell empty (BAGUS at empty cell — uses fresh KBBI word
+     to actually reach no_anchor; LAOS would hit word_already_used
+     since it was placed in test 2)
+  9. KBBI not loaded (after reset)
+  10. Empty word
+  11. Non-string word (null/undefined/number)
+  12. Overlap conflict (isolated 'X' planted at (3,2); LAOS placement
+      fails because A ≠ X at that cell)
+  13. Overlap OK (intersection with same letter — vertical LAGI crosses
+      horizontal AXGA at (4,2)=G; intersection cell's partOfWords has
+      both word IDs)
+  14. Gap rule before (vertical "KASIH" at (0,5)-(4,5) ends right
+      above anchor at (5,5); LAOS placement fails because (4,5) is
+      part of vertical KASIH → adjacent_word_before)
+  15. Gap rule after (vertical "KASIH" starts at (6,5), right below
+      where LAOS would end at (5,5); LAOS placement fails because
+      (6,5) is part of vertical KASIH → adjacent_word_after)
+  16. Gap rule NOT triggered when above-cell is part of HORIZONTAL word
+      (horizontal "ABCD" at (4,4)-(4,7) has B at (4,5); LAOS placement
+      from (5,5) succeeds because (4,5)=B is horizontal, not vertical)
+  17. Multiple successful placements (seed SELASA + LAOS down from
+      (2,2) + SATE down from (2,4) → 3 words on board). Also verifies
+      that SATE from (5,2) FAILS with adjacent_word_before (cell above
+      (4,2) is part of vertical LAOS — correct gap rule).
+  18. Case-insensitivity (lowercase/mixed/whitespace-padded → UPPERCASE)
+  19. Hyphenated word (ANAK-ANAK down from anchor A — 9 cells including
+      hyphen at position 4)
+  20. Spec example exact-match (assertDeepEqual for each cell: L at
+      (2,2), A at (3,2), O at (4,2), S at (5,2))
+  21. wordId & playerId pass-through (BoardModule.getWord(customId)
+      returns the word)
+  22. Spec validation order (not_in_kbbi before no_anchor;
+      word_already_used before no_anchor; fresh KBBI on empty cell →
+      no_anchor)
+
+### Cross-check & 1 test bug found and fixed during this tahap
+1. **Test bug**: Test 17 expected SATE down from (5,2) to succeed,
+   but cell (4,2) is part of vertical LAOS (placed earlier in test 17)
+   → vertical gap rule adjacent_word_before fires correctly. My test
+   comment correctly identified this would fail, but I forgot to
+   update the assertion from `success=true` to `success=false`.
+   Fixed: assertion now expects failure with reason adjacent_word_before.
+   Then a second SATE placement at (2,4) (where no vertical word is
+   above) succeeds.
+
+### Files
+- `game.js` — +placeWordDown (~95 lines), +_isPartOfVerticalWord
+  (~30 lines)
+- `tests/test-placement-down.js` — +575 lines (89 tests)
+- `README.md` — Tahap 12 progress checkbox + test inventory entry
+- `CHANGELOG.md` — this entry

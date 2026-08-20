@@ -1399,6 +1399,36 @@ const PlacementModule = (() => {
   }
 
   /**
+   * Check if a cell at (row, col) is part of any vertical word
+   * (direction 'down' or 'up'). Symmetric to _isPartOfHorizontalWord.
+   * Used by the vertical gap rule for placeWordDown (Tahap 12) and
+   * placeWordUp (Tahap 13): cells immediately above & below the new
+   * word's extent must NOT be part of a vertical word, or we'd merge
+   * two vertical words (gap = 0).
+   * @private
+   */
+  function _isPartOfVerticalWord(row, col) {
+    const cell = BoardModule.getCell(row, col);
+    if (!cell || !cell.letter) return false;
+    if (Array.isArray(cell.partOfWords) && cell.partOfWords.length > 0) {
+      for (const wid of cell.partOfWords) {
+        const w = BoardModule.getWord(wid);
+        if (w && (w.direction === 'down' || w.direction === 'up')) {
+          return true;
+        }
+      }
+    }
+    // Fallback for seed-anchor cells (no addWord called) — only treat
+    // as vertical if cell was setCell'd with direction='vertical' AND
+    // no partOfWords resolve to a horizontal word (to avoid false
+    // positives at intersections).
+    if (cell.direction === 'vertical' && cell.partOfWords.length === 0) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * placeWordRight(word, anchorRow, anchorCol, wordId, playerId) — Tahap 10
    *
    * Place `word` extending to the RIGHT of the anchor cell at
@@ -1582,12 +1612,110 @@ const PlacementModule = (() => {
     return _ok(cells, wordObj, 'placed_left');
   }
 
+  /**
+   * placeWordDown(word, anchorRow, anchorCol, wordId, playerId) — Tahap 12
+   *
+   * Place `word` extending DOWNWARD from the anchor cell at
+   * (anchorRow, anchorCol). The anchor cell must already be filled
+   * with a letter, and the word's FIRST letter must equal that letter
+   * (per spec: "Huruf PERTAMA kata harus = huruf di anchor cell" —
+   * SAME as placeWordRight, just vertical instead of horizontal).
+   *
+   * Spec example: anchor "L" at (2,2) from word "SELASA" (horizontal),
+   * word "LAOS" (starts with L) → L(2,2)=anchor, A(3,2), O(4,2), S(5,2).
+   * Position formula: huruf ke-i → (anchorRow + i, anchorCol)
+   *
+   * Validations (per Tahap 12 spec):
+   *   1. Word is a valid KBBI word
+   *   2. Word hasn't been played before (no repeat)
+   *   3. FIRST letter of word === anchor cell's letter
+   *   4. No overlap conflict (each filled cell in path must have same letter;
+   *      intersection with same letter is OK)
+   *   5. Vertical gap rule: cells immediately above (anchor) & below (last
+   *      letter) the new word's extent must NOT be part of a vertical word
+   *   6. (Subsumed by #4) Vertical word must not "crash into" horizontal
+   *      word — cells passed through but not intersections must have
+   *      matching letter; if different letter, overlap_conflict fires.
+   *
+   * @param {string} word
+   * @param {number} anchorRow
+   * @param {number} anchorCol
+   * @param {string|null} [wordId]
+   * @param {string} [playerId]
+   * @returns {{ success: boolean, cells: Array<{row,col,letter}>, word: object|null, reason: string }}
+   *   On success: { success: true, cells: [...N positions...], word: Word, reason: 'placed_down' }
+   */
+  function placeWordDown(word, anchorRow, anchorCol, wordId, playerId) {
+    // 1. Normalize & non-empty
+    const W = _normalize(word);
+    if (!W) return _fail('empty_word');
+
+    // 2. KBBI must be loaded
+    if (!KBBIModule.isLoaded()) return _fail('kbbi_not_loaded');
+
+    // 3. Valid KBBI word
+    if (!KBBIModule.search(W)) return _fail('not_in_kbbi');
+
+    // 4. No-repeat
+    if (BoardModule.hasWord(W)) return _fail('word_already_used');
+
+    // 5. Anchor cell must exist with a letter
+    const anchor = BoardModule.getCell(anchorRow, anchorCol);
+    if (!anchor || !anchor.letter) return _fail('no_anchor');
+
+    // 6. FIRST letter must equal anchor letter (per spec — same as placeWordRight)
+    if (W[0] !== anchor.letter) return _fail('first_letter_mismatch');
+
+    // 7. Compute positions for 'down' direction
+    //    (anchor at position 0, first letter at anchor; cells extend downward)
+    const cells = _positionsForDirection(W, anchorRow, anchorCol, 'down');
+    if (!cells) return _fail('invalid_direction'); // shouldn't happen for 'down'
+
+    // 8. Overlap conflict — each filled cell in path must have same letter
+    //    (also covers spec point 6: vertical word must not crash into
+    //    horizontal word — if letters differ at a crossing, this fires)
+    for (const c of cells) {
+      const existing = BoardModule.getCell(c.row, c.col);
+      if (existing && existing.letter && existing.letter !== c.letter) {
+        return _fail('overlap_conflict');
+      }
+    }
+
+    // 9. Vertical gap rule — cells immediately ABOVE the anchor (topmost)
+    //    and BELOW the last letter (bottommost) must NOT be part of a
+    //    vertical word (else our new word would merge with an adjacent
+    //    vertical word, gap = 0).
+    const aboveRow = anchorRow - 1;
+    const aboveCell = BoardModule.getCell(aboveRow, anchorCol);
+    if (aboveCell && aboveCell.letter &&
+        _isPartOfVerticalWord(aboveRow, anchorCol)) {
+      return _fail('adjacent_word_before');
+    }
+    const belowRow = anchorRow + W.length;
+    const belowCell = BoardModule.getCell(belowRow, anchorCol);
+    if (belowCell && belowCell.letter &&
+        _isPartOfVerticalWord(belowRow, anchorCol)) {
+      return _fail('adjacent_word_after');
+    }
+
+    // 10. All validations passed — create the Word object and place cells.
+    //     Word's start position is the anchor (topmost cell), direction='down'.
+    const wordObj = BoardModule.createWord(W, anchorRow, anchorCol, 'down',
+                                            playerId, wordId);
+    for (const c of cells) {
+      BoardModule.setCell(c.row, c.col, c.letter, wordObj.id, 'vertical');
+    }
+    BoardModule.addWord(wordObj);
+
+    return _ok(cells, wordObj, 'placed_down');
+  }
+
   // Public API
   return {
     placeWordRight,
     placeWordLeft,
+    placeWordDown,
     // Stubs preserved for later tahaps
-    placeWordDown:  (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 12 */ },
     placeWordUp:    (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 13 */ },
     calculatePositions: (word, anchorRow, anchorCol, direction) => { /* Tahap 18 */ },
   };
