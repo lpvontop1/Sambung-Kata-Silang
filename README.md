@@ -47,7 +47,8 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 │   ├── test-validation.js     # Unit test ValidationModule (207 tests)
 │   ├── test-prefix-search.js  # Unit test SearchModule prefix (89 tests)
 │   ├── test-suffix-search.js  # Unit test SearchModule suffix (81 tests)
-│   └── test-placement-right.js # Unit test PlacementModule.placeWordRight (91 tests)
+│   ├── test-placement-right.js # Unit test PlacementModule.placeWordRight (91 tests)
+│   └── test-placement-left.js  # Unit test PlacementModule.placeWordLeft (83 tests)
 ├── scripts/
 │   └── scrape-kbbi.js      # Skrip scraping & persiapan KBBI (rerunnable)
 ├── CHANGELOG.md            # Riwayat perubahan
@@ -71,7 +72,7 @@ Pemain menempatkan kata pada grid yang saling terhubung melalui huruf awalan/akh
 
 ### Fase 3: Mekanik Penempatan Kata
 - [x] **Tahap 10** — Mekanik Penempatan — Horizontal Kanan
-- [ ] **Tahap 11** — Mekanik Penempatan — Horizontal Kiri
+- [x] **Tahap 11** — Mekanik Penempatan — Horizontal Kiri
 - [ ] **Tahap 12** — Mekanik Penempatan — Vertikal Bawah
 - [ ] **Tahap 13** — Mekanik Penempatan — Vertikal Atas
 - [ ] **Tahap 14** — Deteksi & Validasi Persilangan (Intersection)
@@ -121,6 +122,7 @@ node tests/test-validation.js   # 207 tests — ValidationModule (Tahap 07)
 node tests/test-prefix-search.js # 89 tests — SearchModule prefix search (Tahap 08)
 node tests/test-suffix-search.js  # 81 tests — SearchModule suffix search (Tahap 09)
 node tests/test-placement-right.js # 91 tests — PlacementModule.placeWordRight (Tahap 10)
+node tests/test-placement-left.js  # 83 tests — PlacementModule.placeWordLeft (Tahap 11)
 ```
 
 ## 📜 Lisensi

@@ -809,3 +809,152 @@ Tahap 10 is the first of 9 tahaps (10-18) in Fase 3 — Mekanik Penempatan
 Kata. Next up: Tahap 11 (placeWordLeft — symmetric to right but going
 LEFT; uses suffix matching since new word's LAST letter must equal
 anchor letter).
+
+## [1.1.0] — Tahap 11: Mekanik Penempatan — Horizontal Kiri
+
+### Added
+- `game.js` — **PlacementModule.placeWordLeft** fully implemented:
+  - Signature: `placeWordLeft(word, anchorRow, anchorCol, wordId, playerId)`
+  - Returns `PlacementResult`: `{ success, cells, word, reason }`
+    - On success: `{ success: true, cells: [...N positions...], word: Word,
+      reason: 'placed_left' }`
+    - On failure: same shape as placeWordRight with reasons listed below
+  - Spec example verified: anchor "S" at (2,4) from word "SELASA", word
+    "POS" (ends with S) → cells (2,2)=P, (2,3)=O, (2,4)=S — S of POS
+    attaches to S of SELASA. Position formula per spec:
+    `huruf ke-i → (anchorRow, anchorCol - (wordLength - 1 - i))`
+
+  Validations (per Tahap 11 spec, in order):
+  1. `empty_word` — non-empty normalized word
+  2. `kbbi_not_loaded` — KBBIModule.isLoaded() check
+  3. `not_in_kbbi` — KBBIModule.search fails
+  4. `word_already_used` — BoardModule.hasWord (no-repeat)
+  5. `no_anchor` — anchor cell doesn't exist or has no letter
+  6. **`last_letter_mismatch`** — word's LAST letter must equal anchor
+     letter (per spec: "Huruf TERAKHIR kata harus = huruf di anchor cell")
+     [DIFFERENT from placeWordRight which checks FIRST letter]
+  7. `overlap_conflict` — filled cell in path has different letter
+     (intersection with same letter is OK)
+  8. `adjacent_word_before` — cell at (anchorRow, anchorCol - wordLength)
+     is part of a horizontal word (gap rule before leftmost)
+  9. `adjacent_word_after` — cell at (anchorRow, anchorCol + 1) is part
+     of a horizontal word (gap rule after rightmost = anchor)
+  10. All passed → createWord + setCell + addWord → return success
+
+### Direction Semantic Update (important refactor)
+- `game.js` — **`BoardModule.getWordCellPositions`** formula updated
+  for direction='left' and 'up' to match Tahap 11 (and future Tahap 13)
+  spec. New semantic:
+  - `direction='right'`: start at leftmost cell, cells extend rightward
+    (`col = startCol + i`). Anchor at position 0 (first letter).
+  - `direction='left'`: start at leftmost cell, cells extend rightward
+    (`col = startCol + i`, SAME as 'right'). Anchor at position N-1
+    (LAST letter, rightmost cell). Player chose LEFT placement.
+  - `direction='down'`: start at topmost cell, cells extend downward.
+    Anchor at position 0 (first letter).
+  - `direction='up'`: start at topmost cell, cells extend downward
+    (SAME as 'down'). Anchor at position N-1 (LAST letter, bottommost).
+    [For Tahap 13.]
+  - Rationale: with FORWARD text always stored in Word.text, the
+    difference between 'right'/'left' (and 'down'/'up') is just metadata
+    (player intent + anchor position). Cell layout formula is identical.
+    This avoids storing reversed text in Word.text, which would have
+    broken `hasWord("POS")` for left-placed words.
+- `game.js` — **`PlacementModule._positionsForDirection`** formula
+  updated for 'left' to `col -= (N - 1 - i)` (anchor at position N-1).
+  This matches the spec's position formula exactly. For 'up':
+  `row -= (N - 1 - i)` (for future Tahap 13).
+- `tests/test-board.js` — updated direction='left' and 'up' assertions
+  to match the new semantic (cells extend rightward/downward from
+  leftmost/topmost start, not leftward/upward).
+
+### Spec interpretation notes
+- **Last-letter matching (vs first-letter for RIGHT)**: per spec, when
+  placing a word to the LEFT of an anchor, the word's LAST letter must
+  equal the anchor's letter (so the new word's last cell attaches to
+  the anchor). This is symmetric with RIGHT placement where the FIRST
+  letter must match.
+- **Position formula**: spec says `huruf ke-i → (anchorRow, anchorCol -
+  (wordLength - 1 - i))`. For i=0 (first letter): col = anchorCol -
+  (N-1) = leftmost. For i=N-1 (last letter): col = anchorCol = anchor.
+  So the word reads left-to-right from leftmost to anchor, with the
+  last letter at the anchor.
+- **Gap rule boundaries for LEFT**:
+  - "Before" cell: (anchorRow, anchorCol - wordLength) — left of the
+    leftmost cell of the new word. Must NOT be part of horizontal word.
+  - "After" cell: (anchorRow, anchorCol + 1) — right of the anchor
+    (rightmost cell of the new word). Must NOT be part of horizontal word.
+- **Word stored with FORWARD text**: Word.text = "POS" (not reversed).
+  wordSet stores "POS". hasWord("POS") works correctly. The direction
+  field preserves player intent (LEFT) without affecting cell lookup.
+
+### Tests (tests/test-placement-left.js, 83 tests)
+  1. API surface (placeWordLeft wired; placeWordRight still works from
+     Tahap 10; stubs for down/up/calculatePositions preserved)
+  2. Successful placement (POS left from anchor S via SELASA vertical)
+  3. Result shape: {success, cells, word, reason} verified
+  4. Word written to board + getWordCellPositions consistency (the
+     latter yields same cells as result.cells; intersection cell's
+     partOfWords has both seed and new word IDs)
+  5. Last-letter mismatch (anchor S, word BERLARI ends with I → fails)
+  6. Word not in KBBI (XYZQQ)
+  7. Word already used (POS twice; second fails)
+  8. Anchor cell empty (BAGUS at empty cell — uses fresh KBBI word
+     to actually reach no_anchor; POS would hit word_already_used
+     since it was placed in tests 2/7)
+  9. KBBI not loaded (after reset)
+  10. Empty word
+  11. Non-string word (null/undefined/number)
+  12. Overlap conflict (isolated 'X' planted at (2,3); POS placement
+      fails because O ≠ X at that cell)
+  13. Overlap OK (intersection with same letter — PISANG vertical at
+      (2,2) crosses POS horizontal at (2,2)=P; intersection cell's
+      partOfWords has both seed-pisang and new word IDs)
+  14. Gap rule before (horizontal "KATA" at (2,4)-(2,7) ends right
+      before the new word's leftmost cell at (2,8))
+  15. Gap rule after (horizontal "KATA" starts at (2,5), right after
+      the anchor at (2,4))
+  16. Gap rule NOT triggered when after-cell is part of VERTICAL word
+      (vertical BAHAYA at (2,5); POS placement succeeds because (2,5)=B
+      is vertical, not horizontal)
+  17. Multiple successful placements (seed ABADI vertical + NASI left
+      from (9,10)=I + AB left from (6,10)=B → 3 words on board). Uses
+      fallback to BIB if AB not in KBBI.
+  18. Case-insensitivity (lowercase/mixed/whitespace-padded → UPPERCASE)
+  19. Hyphenated word (ANAK-ANAK left from anchor K — 9 cells including
+      hyphen at position 4)
+  20. Spec example exact-match (assertDeepEqual for each cell: P at
+      (2,2), O at (2,3), S at (2,4))
+  21. wordId & playerId pass-through (BoardModule.getWord(customId)
+      returns the word)
+  22. Spec validation order (not_in_kbbi before no_anchor;
+      word_already_used before no_anchor; fresh KBBI on empty cell →
+      no_anchor)
+
+### Cross-check & bugs found and fixed during this tahap
+1. **Semantic conflict in getWordCellPositions**: original Tahap 02
+   formula for direction='left' was `col -= i` (word extends leftward
+   from start, first letter at start position = rightmost cell). This
+   is INCOMPATIBLE with Tahap 11 spec where the word's LAST letter
+   must be at the anchor (rightmost cell). Resolved by changing the
+   formula to `col = startCol + i` for direction='left' (and 'up'
+   for future Tahap 13). This makes 'left'/'up' semantically mean
+   "player chose this direction, anchor at END of word" while keeping
+   the cell layout the same as 'right'/'down'. Updated test-board.js
+   to match the new semantic.
+2. **Test bug in test 8**: tried `POS` at empty cell (100, 100) to
+   test no_anchor, but POS was already in wordSet from tests 2/7 →
+   word_already_used fires first (correct per spec validation order).
+   Fixed test to use BAGUS (fresh KBBI word not previously placed).
+3. **Test bug in test 17**: expected `getWordCount() == 4` but actual
+   is 3 (seed + NASI + AB = 3). Fixed assertion to expect 3. Also
+   fixed fallback BIB branch (was expecting 4, should be 3).
+
+### Files
+- `game.js` — +placeWordLeft (~95 lines), updated getWordCellPositions
+  formula (left/up), updated _positionsForDirection formula (left/up)
+- `tests/test-board.js` — updated direction='left' and 'up' assertions
+  to match new semantic
+- `tests/test-placement-left.js` — +530 lines (83 tests)
+- `README.md` — Tahap 11 progress checkbox + test inventory entry
+- `CHANGELOG.md` — this entry

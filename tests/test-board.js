@@ -173,12 +173,12 @@ assertDeepEqual(posDown[2], { row: 3, col: 1, letter: 'Z' }, 'Last position (dow
 const wLeft = BoardModule.createWord('POS', 5, 5, 'left', 'p1');
 const posLeft = BoardModule.getWordCellPositions(wLeft);
 assertDeepEqual(posLeft[0], { row: 5, col: 5, letter: 'P' }, 'First position (left)');
-assertDeepEqual(posLeft[2], { row: 5, col: 3, letter: 'S' }, 'Last position (left)');
+assertDeepEqual(posLeft[2], { row: 5, col: 7, letter: 'S' }, 'Last position (left)');
 
 const wUp = BoardModule.createWord('ENDE', 4, 2, 'up', 'p1');
 const posUp = BoardModule.getWordCellPositions(wUp);
 assertDeepEqual(posUp[0], { row: 4, col: 2, letter: 'E' }, 'First position (up)');
-assertDeepEqual(posUp[3], { row: 1, col: 2, letter: 'E' }, 'Last position (up)');
+assertDeepEqual(posUp[3], { row: 7, col: 2, letter: 'E' }, 'Last position (up)');
 
 // --- 15. removeWord ---
 console.log('--- 15. removeWord ---');

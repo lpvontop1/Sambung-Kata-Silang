@@ -298,11 +298,19 @@ const BoardModule = (() => {
       let row = word.startRow;
       let col = word.startCol;
 
+      // Direction semantics (Tahap 11+):
+      //   'right'/'down' — start position is the LEFTMOST/TOPMOST cell (anchor at
+      //     position 0, first letter); cells extend in INCREASING col/row.
+      //   'left'/'up'   — start position is the LEFTMOST/TOPMOST cell (anchor at
+      //     position N-1, LAST letter); cells also extend in INCREASING col/row.
+      //     (Player chose left/up placement, but cells still read left-to-right
+      //     or top-to-bottom with FORWARD text — only the anchor position differs.)
       switch (word.direction) {
-        case 'right': col += i; break;
-        case 'left':  col -= i; break;
-        case 'down':  row += i; break;
-        case 'up':    row -= i; break;
+        case 'right': col += i; break;                  // anchor at position 0
+        case 'left':  col += i; break;                  // anchor at position N-1 (Tahap 11)
+        case 'down':  row += i; break;                  // anchor at position 0
+        case 'up':    row += i; break;                  // anchor at position N-1 (Tahap 13)
+        default: break;
       }
 
       positions.push({
@@ -1340,13 +1348,14 @@ const PlacementModule = (() => {
   function _positionsForDirection(word, anchorRow, anchorCol, direction) {
     const W = _normalize(word);
     const cells = [];
-    for (let i = 0; i < W.length; i++) {
+    const N = W.length;
+    for (let i = 0; i < N; i++) {
       let row = anchorRow, col = anchorCol;
       switch (direction) {
-        case 'right': col += i; break;
-        case 'left':  col -= i; break;
-        case 'down':  row += i; break;
-        case 'up':    row -= i; break;
+        case 'right': col += i; break;                       // anchor at position 0 (first letter)
+        case 'left':  col -= (N - 1 - i); break;             // anchor at position N-1 (LAST letter) — spec Tahap 11
+        case 'down':  row += i; break;                       // anchor at position 0 (first letter) — Tahap 12
+        case 'up':    row -= (N - 1 - i); break;             // anchor at position N-1 (LAST letter) — Tahap 13
         default: return null;
       }
       cells.push({ row, col, letter: W[i] });
@@ -1476,11 +1485,108 @@ const PlacementModule = (() => {
     return _ok(cells, wordObj, 'placed_right');
   }
 
+  /**
+   * placeWordLeft(word, anchorRow, anchorCol, wordId, playerId) — Tahap 11
+   *
+   * Place `word` extending to the LEFT of the anchor cell at
+   * (anchorRow, anchorCol). The anchor cell must already be filled
+   * with a letter, and the word's LAST letter must equal that letter
+   * (per spec: "Huruf TERAKHIR kata harus = huruf di anchor cell").
+   *
+   * Spec example: anchor "S" at (2,4) from word "SELASA", word "POS"
+   * (ends with S) → P(2,2), O(2,3), S(2,4) — S of POS attaches to S
+   * of SELASA. Position formula per spec:
+   *   huruf ke-i → (anchorRow, anchorCol - (wordLength - 1 - i))
+   *
+   * Validations (per Tahap 11 spec):
+   *   1. Word is a valid KBBI word
+   *   2. Word hasn't been played before (no repeat)
+   *   3. LAST letter of word === anchor cell's letter
+   *   4. No overlap conflict (each filled cell in path must have same letter)
+   *   5. Gap rule: cells immediately before (leftmost) & after (rightmost=anchor)
+   *      the new word's extent must NOT be part of a horizontal word
+   *
+   * @param {string} word
+   * @param {number} anchorRow
+   * @param {number} anchorCol
+   * @param {string|null} [wordId]
+   * @param {string} [playerId]
+   * @returns {{ success: boolean, cells: Array<{row,col,letter}>, word: object|null, reason: string }}
+   *   On failure: { success: false, cells: [], word: null, reason }
+   *   On success: { success: true, cells: [...all N positions...], word: Word, reason: 'placed_left' }
+   */
+  function placeWordLeft(word, anchorRow, anchorCol, wordId, playerId) {
+    // 1. Normalize & non-empty
+    const W = _normalize(word);
+    if (!W) return _fail('empty_word');
+
+    // 2. KBBI must be loaded
+    if (!KBBIModule.isLoaded()) return _fail('kbbi_not_loaded');
+
+    // 3. Valid KBBI word
+    if (!KBBIModule.search(W)) return _fail('not_in_kbbi');
+
+    // 4. No-repeat (spec: "Kata belum pernah dimainkan")
+    if (BoardModule.hasWord(W)) return _fail('word_already_used');
+
+    // 5. Anchor cell must exist with a letter
+    const anchor = BoardModule.getCell(anchorRow, anchorCol);
+    if (!anchor || !anchor.letter) return _fail('no_anchor');
+
+    // 6. LAST letter must equal anchor letter (per spec — symmetric to RIGHT's first-letter rule)
+    if (W[W.length - 1] !== anchor.letter) return _fail('last_letter_mismatch');
+
+    // 7. Compute positions for 'left' direction (anchor at position N-1, last letter at anchor)
+    const cells = _positionsForDirection(W, anchorRow, anchorCol, 'left');
+    if (!cells) return _fail('invalid_direction');
+
+    // 8. Overlap conflict — each filled cell in path must have same letter
+    for (const c of cells) {
+      const existing = BoardModule.getCell(c.row, c.col);
+      if (existing && existing.letter && existing.letter !== c.letter) {
+        return _fail('overlap_conflict');
+      }
+    }
+
+    // 9. Gap rule — cells immediately BEFORE the leftmost position and AFTER
+    //    the anchor (rightmost) must NOT be part of a horizontal word.
+    //    - "Before" cell: (anchorRow, anchorCol - W.length) — left of leftmost
+    //    - "After" cell: (anchorRow, anchorCol + 1) — right of anchor (rightmost)
+    const beforeCol = anchorCol - W.length;
+    const beforeCell = BoardModule.getCell(anchorRow, beforeCol);
+    if (beforeCell && beforeCell.letter &&
+        _isPartOfHorizontalWord(anchorRow, beforeCol)) {
+      return _fail('adjacent_word_before');
+    }
+    const afterCol = anchorCol + 1;
+    const afterCell = BoardModule.getCell(anchorRow, afterCol);
+    if (afterCell && afterCell.letter &&
+        _isPartOfHorizontalWord(anchorRow, afterCol)) {
+      return _fail('adjacent_word_after');
+    }
+
+    // 10. All validations passed — create the Word object and place cells.
+    //     The Word's start position is the LEFTMOST cell (where the first
+    //     letter goes), with direction='left' so getWordCellPositions knows
+    //     how to walk it. (BoardModule.getWordCellPositions uses the
+    //     same formula: col -= i for 'left', which yields anchor at position N-1
+    //     IF start position is the leftmost cell. So set startCol = leftmost col.)
+    const startCol = anchorCol - (W.length - 1);
+    const wordObj = BoardModule.createWord(W, anchorRow, startCol, 'left',
+                                            playerId, wordId);
+    for (const c of cells) {
+      BoardModule.setCell(c.row, c.col, c.letter, wordObj.id, 'horizontal');
+    }
+    BoardModule.addWord(wordObj);
+
+    return _ok(cells, wordObj, 'placed_left');
+  }
+
   // Public API
   return {
     placeWordRight,
+    placeWordLeft,
     // Stubs preserved for later tahaps
-    placeWordLeft:  (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 11 */ },
     placeWordDown:  (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 12 */ },
     placeWordUp:    (word, anchorRow, anchorCol, wordId, playerId) => { /* Tahap 13 */ },
     calculatePositions: (word, anchorRow, anchorCol, direction) => { /* Tahap 18 */ },
